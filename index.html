@@ -55,6 +55,10 @@
             box-shadow: 0 10px 35px rgba(0, 0, 0, 0.35);
             background: rgba(255, 255, 255, 0.22);
         }
+          body.fade-out {
+    opacity: 0;
+  }
+
     </style>
 </head>
 
@@ -63,7 +67,7 @@
         <source src="bg.mp4" type="video/mp4">
     </video>
 
-    <button class="browse-btn" id="projectsBtn"
+    <button onlick="fadeoutpage()" class="browse-btn" id="projectsBtn"
         onclick="window.location.href='https://lab.jaacck.me/projects'">
         Browse Projects
     </button>
@@ -72,6 +76,10 @@
         setTimeout(() => {
             document.getElementById('projectsBtn').classList.add('show');
         }, 5000);
-    </script>
+
+    function fadeOutPage() {
+      document.body.classList.add('fade-out');
+    }
+  </script>
 </body>
 </html>
