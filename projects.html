@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Terminal Projects</title>
+    <title>Project Terminal</title>
 
     <style>
         body {
@@ -9,88 +9,87 @@
             background: black;
             color: #00ff88;
             font-family: monospace;
-            padding: 20px;
+            padding: 30px;
         }
 
-        #terminal {
-            max-width: 800px;
+        .terminal {
+            max-width: 900px;
             margin: auto;
         }
 
-        #output {
-            white-space: pre-wrap;
-            margin-bottom: 10px;
+        .header {
+            margin-bottom: 20px;
+            opacity: 0.8;
         }
 
-        input {
-            width: 100%;
-            background: black;
-            color: #00ff88;
-            border: none;
-            outline: none;
-            font-family: monospace;
-            font-size: 16px;
+        .list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .project {
+            padding: 14px;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+            background: rgba(0, 255, 136, 0.05);
+        }
+
+        .project:hover {
+            background: rgba(0, 255, 136, 0.15);
+            transform: translateX(5px);
+        }
+
+        .name {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .url {
+            font-size: 12px;
+            opacity: 0.6;
+            margin-top: 4px;
         }
     </style>
 </head>
 
 <body>
 
-<div id="terminal">
-    <div id="output">
-Welcome to Project Terminal
-Type "help" to begin
+<div class="terminal">
+    <div class="header">
+        PROJECT TERMINAL<br>
+        Select a project to open:
     </div>
 
-    <input id="cmd" autofocus placeholder="> type a command" />
+    <div class="list" id="list"></div>
 </div>
 
 <script>
-const output = document.getElementById("output");
-const cmd = document.getElementById("cmd");
-
 const projects = [
-    { name: "portfolio", url: "https://jaacck.me" },
-    { name: "stemmixer", url: "https://stemmixer.pages.dev" },
+    { name: "Portfolio", url: "https://lab.jaacck.me/projects/portfolio" },
+    { name: "Game Engine", url: "https://lab.jaacck.me/projects/game" },
+    { name: "AI Tool", url: "https://lab.jaacck.me/projects/ai" },
+    { name: "Music Visualizer", url: "https://lab.jaacck.me/projects/music" }
 ];
 
-function print(text) {
-    output.textContent += "\n" + text;
-}
+const list = document.getElementById("list");
 
-cmd.addEventListener("keydown", function(e) {
-    if (e.key === "Enter") {
-        const input = cmd.value.trim();
-        print("> " + input);
+projects.forEach(p => {
+    const item = document.createElement("div");
+    item.className = "project";
 
-        if (input === "help") {
-            print("Commands:");
-            print("  ls        - list projects");
-            print("  open name - open a project");
-        }
+    item.innerHTML = `
+        <div class="name">> ${p.name}</div>
+        <div class="url">${p.url}</div>
+    `;
 
-        else if (input === "ls") {
-            print("Projects:");
-            projects.forEach(p => print("  - " + p.name));
-        }
+    item.onclick = () => {
+        window.location.href = p.url;
+    };
 
-        else if (input.startsWith("open ")) {
-            const name = input.split(" ")[1];
-            const project = projects.find(p => p.name === name);
-
-            if (project) {
-                window.location.href = project.url;
-            } else {
-                print("Project not found");
-            }
-        }
-
-        else {
-            print("Unknown command");
-        }
-
-        cmd.value = "";
-    }
+    list.appendChild(item);
 });
 </script>
 
