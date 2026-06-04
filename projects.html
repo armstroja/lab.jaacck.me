@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Terminal Projects</title>
+
+    <style>
+        body {
+            margin: 0;
+            background: black;
+            color: #00ff88;
+            font-family: monospace;
+            padding: 20px;
+        }
+
+        #terminal {
+            max-width: 800px;
+            margin: auto;
+        }
+
+        #output {
+            white-space: pre-wrap;
+            margin-bottom: 10px;
+        }
+
+        input {
+            width: 100%;
+            background: black;
+            color: #00ff88;
+            border: none;
+            outline: none;
+            font-family: monospace;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="terminal">
+    <div id="output">
+Welcome to Project Terminal
+Type "help" to begin
+    </div>
+
+    <input id="cmd" autofocus placeholder="> type a command" />
+</div>
+
+<script>
+const output = document.getElementById("output");
+const cmd = document.getElementById("cmd");
+
+const projects = [
+    { name: "portfolio", url: "https://jaacck.me" },
+    { name: "stemmixer", url: "https://stemmixer.pages.dev" },
+];
+
+function print(text) {
+    output.textContent += "\n" + text;
+}
+
+cmd.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+        const input = cmd.value.trim();
+        print("> " + input);
+
+        if (input === "help") {
+            print("Commands:");
+            print("  ls        - list projects");
+            print("  open name - open a project");
+        }
+
+        else if (input === "ls") {
+            print("Projects:");
+            projects.forEach(p => print("  - " + p.name));
+        }
+
+        else if (input.startsWith("open ")) {
+            const name = input.split(" ")[1];
+            const project = projects.find(p => p.name === name);
+
+            if (project) {
+                window.location.href = project.url;
+            } else {
+                print("Project not found");
+            }
+        }
+
+        else {
+            print("Unknown command");
+        }
+
+        cmd.value = "";
+    }
+});
+</script>
+
+</body>
+</html>
