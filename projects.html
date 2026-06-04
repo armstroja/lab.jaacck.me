@@ -10,6 +10,13 @@
             color: white;
             font-family: monospace;
             padding: 30px;
+
+            opacity: 0;
+            transition: opacity 1s ease;
+        }
+
+        body.loaded {
+            opacity: 1;
         }
 
         .terminal {
@@ -20,7 +27,7 @@
         .header {
             margin-bottom: 20px;
             opacity: 0.8;
-            font-size:30px;
+            font-size: 30px;
         }
 
         .list {
@@ -31,7 +38,6 @@
 
         .project {
             padding: 14px;
-            border: 0px solid rgba(0, 255, 136, 0.3);
             border-radius: 8px;
             cursor: pointer;
             transition: 0.2s;
@@ -89,6 +95,10 @@ projects.forEach(p => {
     };
 
     list.appendChild(item);
+});
+
+window.addEventListener("load", () => {
+    document.body.classList.add("loaded");
 });
 </script>
 
