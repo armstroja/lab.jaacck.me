@@ -18,18 +18,28 @@
         body {
             margin: 0;
             height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            overflow: hidden;
         }
 
         .browse-btn {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
             padding: 14px 28px;
             font-size: 18px;
             cursor: pointer;
-            z-index: 1;
             border: none;
             border-radius: 8px;
+
+            opacity: 0;
+            transition: opacity 0.8s ease;
+            pointer-events: none;
+        }
+
+        .browse-btn.show {
+            opacity: 1;
+            pointer-events: auto;
         }
     </style>
 </head>
@@ -39,8 +49,15 @@
         <source src="bg.mp4" type="video/mp4">
     </video>
 
-    <button class="browse-btn" onclick="window.location.href='https://lab.jaacck.me/projects'">
+    <button class="browse-btn" id="projectsBtn"
+        onclick="window.location.href='https://lab.jaacck.me/projects'">
         Browse Projects
     </button>
+
+    <script>
+        setTimeout(() => {
+            document.getElementById('projectsBtn').classList.add('show');
+        }, 5000);
+    </script>
 </body>
 </html>
