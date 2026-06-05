@@ -304,15 +304,11 @@ window.addEventListener('deviceorientation', (e) => {
   const beta = e.beta || 0;
   const gamma = e.gamma || 0;
 
-  // Normalize: phone face-up flat = beta~0, tipping top toward you = beta goes negative
-  // We want tiltAngle to increase as you tip the glass to drink
-  // If beta is near 90, phone is upright. If beta approaches 0 (or negative), you're tilting to drink.
-  // Convert: at beta=90 = upright, beta=0 = flat face-up, beta=180 = face-down
-  // Drinking gesture: beta moving from ~90 toward 0 or toward 180
-  // iBeer: portrait, tip top toward face
-  // beta < 45 = significantly tilted = drinking
-  const upright = 90;
-  const normalized = (upright - Math.abs(beta)) / upright; // 0 at upright, 1 at flat
+  // beta: 90 = upright, 0 = flat face-up, -90 = fully upside-down (fully inverted)
+  // Drinking range: beta 90 (upright) → 0 (flat) → -90 (upside-down)
+  // tiltAngle: 0 at upright (beta=90), 1 at fully inverted (beta=-90)
+  const clampedBeta = Math.max(-90, Math.min(90, beta));
+  const normalized = (90 - clampedBeta) / 180; // 0 at upright, 0.5 at flat, 1 at inverted
   tiltAngle = Math.max(0, normalized);
   rollAngle = (gamma / 90) * Math.PI * 0.4;
 }, true);
@@ -629,11 +625,12 @@ function animate(ts) {
   // Use keyboard tilt on desktop
   const effectiveTilt = Math.max(tiltAngle, keyTilt);
 
-  // Drain logic
-  draining = effectiveTilt > 0.25 && fillLevel > 0.005 && !isRefilling;
+  // Drain logic — threshold at 0.15 (just past upright), rate curves steeply toward fully inverted
+  draining = effectiveTilt > 0.15 && fillLevel > 0.005 && !isRefilling;
   if (draining) {
-    drainRate = Math.min(1, (effectiveTilt - 0.25) / 0.75);
-    fillLevel = Math.max(0, fillLevel - drainRate * 0.004);
+    const t = Math.min(1, (effectiveTilt - 0.15) / 0.85);
+    drainRate = Math.pow(t, 1.8); // exponential curve: slow start, floods when inverted
+    fillLevel = Math.max(0, fillLevel - drainRate * 0.006);
     foamThickness = Math.max(0, foamThickness - drainRate * 0.0008);
 
     // Gulp sound
