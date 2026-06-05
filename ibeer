@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>iBeer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  #splash {
+    position: fixed;
+    inset: 0;
+    background: #0a0500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    cursor: pointer;
+    transition: opacity 0.6s ease;
+  }
+  #splash.fade-out {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .splash-glass {
+    font-size: 80px;
+    margin-bottom: 24px;
+    animation: float 2.5s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-12px); }
+  }
+  .splash-title {
+    font-size: 48px;
+    font-weight: 700;
+    color: #f5a623;
+    letter-spacing: -1px;
+    margin-bottom: 8px;
+  }
+  .splash-sub {
+    font-size: 16px;
+    color: rgba(245,166,35,0.5);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 48px;
+  }
+  .splash-tap {
+    font-size: 18px;
+    color: rgba(255,255,255,0.7);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  .condensation {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 30% 70%, rgba(255,255,255,0.03) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 20%, rgba(255,255,255,0.02) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  #tilt-warn {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.3);
+    font-size: 13px;
+    z-index: 5;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 1s;
+  }
+</style>
+</head>
+<body>
+
+<div id="splash">
+  <div class="condensation"></div>
+  <div class="splash-glass">🍺</div>
+  <div class="splash-title">iBeer</div>
+  <div class="splash-sub">Cold &amp; refreshing</div>
+  <div class="splash-tap">Tap to pour</div>
+</div>
+
+<canvas id="canvas"></canvas>
+<div id="tilt-warn">Tilt to drink • Shake to refill</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const splash = document.getElementById('splash');
+const warn = document.getElementById('tilt-warn');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// State
+let started = false;
+let audioCtx = null;
+
+// Beer state
+let fillLevel = 0.82; // 0=empty, 1=full
+let tiltAngle = 0;    // radians, positive = tipping toward face (top tilts down)
+let rollAngle = 0;    // left/right roll
+let waveOffset = 0;
+let waveAmp = 0;
+let targetWaveAmp = 0;
+let foamThickness = 0.06; // fraction of glass height
+let foamSloshOffset = 0;
+let foamTargetSlosh = 0;
+let foamBubbles = [];
+let bubbles = [];
+let draining = false;
+let drainRate = 0;
+let isEmpty = false;
+let isRefilling = false;
+let foamSurge = 0;
+let gulpTimer = 0;
+let gulpInterval = 0;
+let shakeDetect = { lastAcc: null, shakeCount: 0, lastShake: 0 };
+
+// Bubble pool
+function spawnBubble() {
+  const glassLeft = W * 0.08;
+  const glassRight = W * 0.92;
+  const glassBottom = H * 0.88;
+  const glassTop = H * 0.08;
+  const liquidTop = glassBottom - (glassBottom - glassTop) * fillLevel;
+  return {
+    x: glassLeft + Math.random() * (glassRight - glassLeft),
+    y: glassBottom - Math.random() * (glassBottom - liquidTop) * 0.8,
+    r: 1 + Math.random() * 2.5,
+    vy: -(0.4 + Math.random() * 0.8),
+    vx: (Math.random() - 0.5) * 0.3,
+    alpha: 0.3 + Math.random() * 0.4,
+    life: 1.0
+  };
+}
+
+function initBubbles() {
+  bubbles = [];
+  for (let i = 0; i < 35; i++) {
+    bubbles.push(spawnBubble());
+  }
+}
+
+// Foam surface bubbles
+function spawnFoamBubble() {
+  const glassLeft = W * 0.08;
+  const glassRight = W * 0.92;
+  return {
+    x: glassLeft + Math.random() * (glassRight - glassLeft),
+    r: 3 + Math.random() * 8,
+    alpha: 0.6 + Math.random() * 0.3,
+    life: 1.0,
+    decay: 0.002 + Math.random() * 0.003
+  };
+}
+
+function initFoamBubbles() {
+  foamBubbles = [];
+  for (let i = 0; i < 60; i++) foamBubbles.push(spawnFoamBubble());
+}
+
+// Audio
+function createAudioCtx() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playGulp(intensity) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const dur = 0.08 + intensity * 0.05;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const filter = audioCtx.createBiquadFilter();
+
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(400 + intensity * 200, t);
+  filter.frequency.exponentialRampToValueAtTime(100, t + dur);
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(180 + intensity * 80, t);
+  osc.frequency.exponentialRampToValueAtTime(60, t + dur);
+
+  gain.gain.setValueAtTime(0.25 * intensity, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.01);
+
+  // Add a noise burst for glugging texture
+  const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.4;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const noiseGain = audioCtx.createGain();
+  const noiseFilter = audioCtx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.value = 300;
+  noiseFilter.Q.value = 0.5;
+  noiseGain.gain.setValueAtTime(0.15 * intensity, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(audioCtx.destination);
+  noise.start(t);
+  noise.stop(t + dur + 0.01);
+}
+
+function playEmpty() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(800, t);
+  osc.frequency.exponentialRampToValueAtTime(400, t + 0.3);
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.35);
+}
+
+function playPour() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const dur = 1.2;
+  const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    const env = Math.min(i / (bufferSize * 0.1), 1) * Math.max(0, 1 - (i - bufferSize * 0.7) / (bufferSize * 0.3));
+    data[i] = (Math.random() * 2 - 1) * env * 0.5;
+  }
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(800, t);
+  filter.Q.value = 0.8;
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.3, t);
+  gain.gain.setValueAtTime(0.3, t + dur * 0.7);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+  noise.start(t); noise.stop(t + dur + 0.1);
+}
+
+// Device orientation
+let permissionGranted = false;
+
+async function requestPermissions() {
+  createAudioCtx();
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const res = await DeviceOrientationEvent.requestPermission();
+      if (res === 'granted') permissionGranted = true;
+    } catch(e) {}
+  } else {
+    permissionGranted = true;
+  }
+
+  if (typeof DeviceMotionEvent !== 'undefined' &&
+      typeof DeviceMotionEvent.requestPermission === 'function') {
+    try { await DeviceMotionEvent.requestPermission(); } catch(e) {}
+  }
+}
+
+window.addEventListener('deviceorientation', (e) => {
+  if (!started) return;
+  // beta: front-back tilt (-180 to 180), gamma: left-right (-90 to 90)
+  // Drinking = tilting top of phone toward face = beta going negative (or large positive)
+  // gamma for roll
+  const beta = e.beta || 0;
+  const gamma = e.gamma || 0;
+
+  // Normalize: phone face-up flat = beta~0, tipping top toward you = beta goes negative
+  // We want tiltAngle to increase as you tip the glass to drink
+  // If beta is near 90, phone is upright. If beta approaches 0 (or negative), you're tilting to drink.
+  // Convert: at beta=90 = upright, beta=0 = flat face-up, beta=180 = face-down
+  // Drinking gesture: beta moving from ~90 toward 0 or toward 180
+  // iBeer: portrait, tip top toward face
+  // beta < 45 = significantly tilted = drinking
+  const upright = 90;
+  const normalized = (upright - Math.abs(beta)) / upright; // 0 at upright, 1 at flat
+  tiltAngle = Math.max(0, normalized);
+  rollAngle = (gamma / 90) * Math.PI * 0.4;
+}, true);
+
+window.addEventListener('devicemotion', (e) => {
+  if (!started) return;
+  const acc = e.accelerationIncludingGravity;
+  if (!acc) return;
+  const magnitude = Math.sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
+  const now = Date.now();
+
+  if (shakeDetect.lastAcc !== null) {
+    const delta = Math.abs(magnitude - shakeDetect.lastAcc);
+    if (delta > 15 && now - shakeDetect.lastShake > 200) {
+      shakeDetect.shakeCount++;
+      shakeDetect.lastShake = now;
+      if (shakeDetect.shakeCount >= 2 && fillLevel < 0.1) {
+        triggerRefill();
+        shakeDetect.shakeCount = 0;
+      }
+    }
+    if (now - shakeDetect.lastShake > 800) shakeDetect.shakeCount = 0;
+  }
+  shakeDetect.lastAcc = magnitude;
+}, true);
+
+function triggerRefill() {
+  if (isRefilling) return;
+  isRefilling = true;
+  isEmpty = false;
+  foamSurge = 1.0;
+  playPour();
+  initBubbles();
+  initFoamBubbles();
+  const refillInterval = setInterval(() => {
+    fillLevel = Math.min(0.82, fillLevel + 0.025);
+    foamThickness = Math.min(0.12, foamThickness + 0.008);
+    if (fillLevel >= 0.82) {
+      clearInterval(refillInterval);
+      isRefilling = false;
+      foamThickness = 0.09;
+    }
+  }, 40);
+}
+
+// Keyboard tilt simulation for desktop
+let keyTilt = 0;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp') keyTilt = 1;
+  if (e.key === 'ArrowDown') keyTilt = 0;
+  if (e.key === 'r' || e.key === 'R') { fillLevel = 0; triggerRefill(); }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowUp') keyTilt = 0;
+});
+
+// Splash interaction
+splash.addEventListener('click', async () => {
+  await requestPermissions();
+  started = true;
+  initBubbles();
+  initFoamBubbles();
+  splash.classList.add('fade-out');
+  setTimeout(() => splash.style.display = 'none', 700);
+  setTimeout(() => { warn.style.opacity = '0'; }, 4000);
+});
+
+// Also allow tap on canvas to refill
+canvas.addEventListener('click', () => {
+  if (!started) return;
+  if (fillLevel < 0.1) triggerRefill();
+});
+
+// Draw functions
+function drawGlass() {
+  const gLeft = W * 0.06;
+  const gRight = W * 0.94;
+  const gTop = H * 0.04;
+  const gBottom = H * 0.92;
+  const gW = gRight - gLeft;
+  const gH = gBottom - gTop;
+
+  // Glass shape - slightly tapered pint glass
+  const topInset = gW * 0.04;
+  const bottomInset = gW * 0.08;
+
+  ctx.save();
+
+  // Glass clip path
+  ctx.beginPath();
+  ctx.moveTo(gLeft + topInset, gTop);
+  ctx.lineTo(gRight - topInset, gTop);
+  ctx.lineTo(gRight - bottomInset, gBottom);
+  ctx.lineTo(gLeft + bottomInset, gBottom);
+  ctx.closePath();
+  ctx.clip();
+
+  // Background of glass (dark)
+  ctx.fillStyle = '#0d0800';
+  ctx.fillRect(0, 0, W, H);
+
+  // --- Liquid ---
+  if (fillLevel > 0) {
+    const liquidBottom = gBottom;
+    const liquidTop = gBottom - gH * fillLevel;
+    const foamTop = liquidTop - gH * foamThickness * (1 + foamSurge * 0.5);
+
+    // Wave parameters
+    const sloshX = Math.sin(rollAngle) * gW * 0.18;
+    const wavePhase = waveOffset;
+
+    // Draw liquid body
+    const liquidGrad = ctx.createLinearGradient(gLeft, 0, gRight, 0);
+    liquidGrad.addColorStop(0, '#8B4A00');
+    liquidGrad.addColorStop(0.3, '#C8720A');
+    liquidGrad.addColorStop(0.55, '#E8901A');
+    liquidGrad.addColorStop(0.8, '#C8720A');
+    liquidGrad.addColorStop(1, '#7A3E00');
+    ctx.fillStyle = liquidGrad;
+
+    ctx.beginPath();
+    ctx.moveTo(gLeft + bottomInset, liquidBottom);
+    ctx.lineTo(gRight - bottomInset, liquidBottom);
+
+    // Right side
+    ctx.lineTo(gRight - topInset + (gRight - gLeft) * 0.02, liquidTop + sloshX * 0.3);
+
+    // Liquid surface with wave
+    const steps = 60;
+    for (let i = steps; i >= 0; i--) {
+      const px = (gLeft + topInset) + (i / steps) * (gW - topInset * 2 - bottomInset * 0.5);
+      const waveY = Math.sin((i / steps) * Math.PI * 3 + wavePhase) * waveAmp
+                  + Math.sin((i / steps) * Math.PI * 5 + wavePhase * 1.3) * waveAmp * 0.4;
+      const slopeY = sloshX * (1 - (i / steps) * 2) * 0.6;
+      ctx.lineTo(px, liquidTop + waveY + slopeY);
+    }
+
+    ctx.lineTo(gLeft + bottomInset, liquidBottom);
+    ctx.closePath();
+    ctx.fill();
+
+    // Liquid depth shading
+    const depthGrad = ctx.createLinearGradient(0, liquidTop, 0, liquidBottom);
+    depthGrad.addColorStop(0, 'rgba(0,0,0,0.0)');
+    depthGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
+    ctx.fillStyle = depthGrad;
+    ctx.beginPath();
+    ctx.moveTo(gLeft + bottomInset, liquidBottom);
+    ctx.lineTo(gRight - bottomInset, liquidBottom);
+    ctx.lineTo(gRight - topInset, liquidTop);
+    ctx.lineTo(gLeft + topInset, liquidTop);
+    ctx.closePath();
+    ctx.fill();
+
+    // Light refraction streak
+    ctx.beginPath();
+    ctx.moveTo(gLeft + topInset + gW * 0.15, liquidTop);
+    ctx.lineTo(gLeft + bottomInset + gW * 0.12, liquidBottom);
+    ctx.lineWidth = gW * 0.04;
+    ctx.strokeStyle = 'rgba(255,200,80,0.07)';
+    ctx.stroke();
+
+    // Bubbles
+    ctx.save();
+    bubbles.forEach(b => {
+      if (b.y > liquidTop && b.y < liquidBottom) {
+        const g = ctx.createRadialGradient(b.x - b.r*0.3, b.y - b.r*0.3, 0, b.x, b.y, b.r);
+        g.addColorStop(0, `rgba(255,220,120,${b.alpha * b.life})`);
+        g.addColorStop(1, `rgba(200,140,20,${b.alpha * b.life * 0.3})`);
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fillStyle = g;
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+
+    // --- Foam ---
+    const foamY = liquidTop - gH * foamThickness * (1 + foamSurge * 0.3);
+    const foamSlosh = foamSloshOffset;
+
+    ctx.save();
+
+    // Foam body
+    const foamGrad = ctx.createLinearGradient(0, foamY, 0, liquidTop + 4);
+    foamGrad.addColorStop(0, 'rgba(255,252,240,0.95)');
+    foamGrad.addColorStop(0.5, 'rgba(245,235,200,0.88)');
+    foamGrad.addColorStop(1, 'rgba(230,210,160,0.7)');
+    ctx.fillStyle = foamGrad;
+
+    ctx.beginPath();
+    // Foam top - lumpy
+    const foamSteps = 40;
+    ctx.moveTo(gLeft + topInset, foamY + foamSlosh * 0.5);
+    for (let i = 0; i <= foamSteps; i++) {
+      const px = (gLeft + topInset) + (i / foamSteps) * (gW - topInset * 2 - bottomInset * 0.3);
+      const lumpY = Math.sin(i * 1.7 + wavePhase * 0.5) * 6
+                  + Math.sin(i * 3.1 + wavePhase * 0.8) * 3
+                  + foamSurge * Math.sin(i * 0.8 + wavePhase) * 10;
+      const slopeY = foamSlosh * (1 - (i / foamSteps) * 2) * 0.5;
+      ctx.lineTo(px, foamY + lumpY + slopeY);
+    }
+    // Bottom of foam = liquid surface
+    for (let i = foamSteps; i >= 0; i--) {
+      const px = (gLeft + topInset) + (i / foamSteps) * (gW - topInset * 2 - bottomInset * 0.3);
+      const waveY = Math.sin((i / foamSteps) * Math.PI * 3 + wavePhase) * waveAmp
+                  + Math.sin((i / foamSteps) * Math.PI * 5 + wavePhase * 1.3) * waveAmp * 0.4;
+      const slopeY = sloshX * (1 - (i / foamSteps) * 2) * 0.6;
+      ctx.lineTo(px, liquidTop + waveY + slopeY + 2);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Foam bubbles on surface
+    foamBubbles.forEach(fb => {
+      const surfaceY = liquidTop - gH * foamThickness * 0.5;
+      if (fb.x > gLeft + topInset && fb.x < gRight - topInset) {
+        ctx.beginPath();
+        ctx.arc(fb.x, surfaceY, fb.r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,240,200,${fb.alpha * fb.life * 0.6})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255,252,240,${fb.alpha * fb.life * 0.15})`;
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+  }
+
+  ctx.restore();
+
+  // Glass walls (drawn on top)
+  ctx.save();
+  const wallGrad = ctx.createLinearGradient(gLeft, 0, gRight, 0);
+  wallGrad.addColorStop(0, 'rgba(180,220,255,0.55)');
+  wallGrad.addColorStop(0.08, 'rgba(255,255,255,0.08)');
+  wallGrad.addColorStop(0.5, 'rgba(255,255,255,0.03)');
+  wallGrad.addColorStop(0.92, 'rgba(255,255,255,0.06)');
+  wallGrad.addColorStop(1, 'rgba(120,180,240,0.45)');
+
+  ctx.beginPath();
+  ctx.moveTo(gLeft + topInset, gTop);
+  ctx.lineTo(gRight - topInset, gTop);
+  ctx.lineTo(gRight - bottomInset, gBottom);
+  ctx.lineTo(gLeft + bottomInset, gBottom);
+  ctx.lineTo(gLeft + topInset, gTop);
+  ctx.strokeStyle = 'rgba(200,230,255,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Glass shine overlays
+  // Left edge highlight
+  ctx.beginPath();
+  ctx.moveTo(gLeft + topInset + 2, gTop + 20);
+  ctx.lineTo(gLeft + bottomInset + 2, gBottom - 20);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Right edge subtle
+  ctx.beginPath();
+  ctx.moveTo(gRight - topInset - 2, gTop + 20);
+  ctx.lineTo(gRight - bottomInset - 2, gBottom - 20);
+  ctx.strokeStyle = 'rgba(180,220,255,0.15)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // Glass bottom thick base
+  ctx.beginPath();
+  ctx.moveTo(gLeft + bottomInset, gBottom);
+  ctx.lineTo(gRight - bottomInset, gBottom);
+  ctx.strokeStyle = 'rgba(200,230,255,0.6)';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Glass top rim
+  ctx.beginPath();
+  ctx.moveTo(gLeft + topInset, gTop);
+  ctx.lineTo(gRight - topInset, gTop);
+  ctx.strokeStyle = 'rgba(200,230,255,0.7)';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawEmpty() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = `bold ${W * 0.07}px -apple-system, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Shake to refill!', W/2, H * 0.5);
+  ctx.font = `${W * 0.12}px sans-serif`;
+  ctx.fillText('🍺', W/2, H * 0.38);
+  ctx.restore();
+}
+
+// Animation loop
+let lastTime = 0;
+function animate(ts) {
+  requestAnimationFrame(animate);
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  if (!started) {
+    ctx.clearRect(0, 0, W, H);
+    return;
+  }
+
+  // Use keyboard tilt on desktop
+  const effectiveTilt = Math.max(tiltAngle, keyTilt);
+
+  // Drain logic
+  draining = effectiveTilt > 0.25 && fillLevel > 0.005 && !isRefilling;
+  if (draining) {
+    drainRate = Math.min(1, (effectiveTilt - 0.25) / 0.75);
+    fillLevel = Math.max(0, fillLevel - drainRate * 0.004);
+    foamThickness = Math.max(0, foamThickness - drainRate * 0.0008);
+
+    // Gulp sound
+    gulpTimer -= dt;
+    if (gulpTimer <= 0) {
+      playGulp(drainRate);
+      gulpInterval = 0.12 + (1 - drainRate) * 0.25;
+      gulpTimer = gulpInterval;
+    }
+  } else {
+    gulpTimer = 0;
+  }
+
+  // Empty detection
+  if (fillLevel <= 0.005 && !isEmpty && !isRefilling) {
+    isEmpty = true;
+    playEmpty();
+  }
+
+  // Wave physics
+  targetWaveAmp = draining ? (drainRate * 18 + Math.abs(rollAngle) * 12) : (Math.abs(rollAngle) * 8 + (isRefilling ? 12 : 0));
+  waveAmp += (targetWaveAmp - waveAmp) * 0.08;
+  waveOffset += (0.04 + drainRate * 0.06 + (isRefilling ? 0.05 : 0));
+
+  // Foam slosh (lagged behind liquid)
+  foamTargetSlosh = Math.sin(rollAngle) * W * 0.06;
+  foamSloshOffset += (foamTargetSlosh - foamSloshOffset) * 0.04;
+
+  // Foam surge decay
+  foamSurge = Math.max(0, foamSurge - dt * 0.4);
+
+  // Update bubbles
+  const glassLeft = W * 0.08;
+  const glassRight = W * 0.92;
+  const glassBottom = H * 0.88;
+  const glassTop = H * 0.08;
+
+  bubbles.forEach(b => {
+    b.y += b.vy * (1 + drainRate * 0.5);
+    b.x += b.vx;
+    const liquidTop = glassBottom - (glassBottom - glassTop) * fillLevel;
+    if (b.y < liquidTop || b.x < glassLeft || b.x > glassRight) {
+      Object.assign(b, spawnBubble());
+    }
+  });
+
+  foamBubbles.forEach(fb => {
+    fb.life -= fb.decay;
+    if (fb.life <= 0) Object.assign(fb, spawnFoamBubble());
+  });
+
+  // Draw
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // Background amber glow when full
+  if (fillLevel > 0.3) {
+    const glow = ctx.createRadialGradient(W/2, H * 0.6, 0, W/2, H * 0.6, W * 0.7);
+    glow.addColorStop(0, `rgba(180,90,10,${fillLevel * 0.12})`);
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  drawGlass();
+
+  if (isEmpty && !isRefilling) drawEmpty();
+}
+
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
