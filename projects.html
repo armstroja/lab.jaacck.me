@@ -1,119 +1,244 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>lab</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>lab — jaacck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: #f2f1ee;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
 
-    <style>
-        body {
-            margin: 0;
-            font-family: monospace;
-            color: white;
-            overflow: hidden;
+  .lab {
+    background: #f2f1ee;
+    color: #0a0a0a;
+    min-height: 100vh;
+    font-family: 'Archivo', -apple-system, Helvetica, sans-serif;
+    display: flex;
+    flex-direction: column;
+    padding: clamp(28px, 4vw, 56px) clamp(24px, 4.4vw, 64px);
+  }
 
-            opacity: 0;
-            transition: opacity 1s ease;
-        }
+  /* ---- header ---- */
+  .lab-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #7c7a75;
+  }
+  .lab-top b {
+    color: #0a0a0a;
+    font-weight: 700;
+    font-size: 13px;
+  }
 
-        body.loaded {
-            opacity: 1;
-        }
+  /* ---- stack ---- */
+  .lab-stack {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: clamp(20px, 4vh, 48px) 0;
+  }
 
-        /* BACKGROUND VIDEO */
-        .bg-video {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: -1;
-            filter: brightness(0.85) contrast(1.05);
-        }
+  .row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    border-top: 1.5px solid #0a0a0a;
+    padding: clamp(14px, 1.6vw, 22px) 0 clamp(18px, 2vw, 26px);
+    text-decoration: none;
+    color: inherit;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .row {
+      animation: labRise .72s cubic-bezier(.2,.7,.2,1) both;
+    }
+  }
+  @keyframes labRise {
+    from { opacity: 0; transform: translateY(30px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .lab-stack .row:last-child {
+    border-bottom: 1.5px solid #0a0a0a;
+  }
 
-        /* LEFT TERMINAL */
-        .terminal {
-            position: absolute;
-            top: 50%;
-            left: 40px;
-            transform: translateY(-50%);
+  .row-idx {
+    position: absolute;
+    left: 0;
+    top: clamp(6px, 0.8vw, 12px);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #7c7a75;
+  }
 
-            width: 420px;
+  .row-name {
+    margin: 0;
+    font-size: clamp(38px, 8.4vw, 108px);
+    line-height: 0.9;
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    white-space: nowrap;
+    transition: transform .4s cubic-bezier(.2,.7,.2,1);
+    display: flex;
+    align-items: flex-start;
+    gap: 0.12em;
+  }
+  .row-ext {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+    font-size: 0.2em;
+    line-height: 1;
+    margin-top: 0.35em;
+    color: #7c7a75;
+    opacity: 0;
+    transform: translate(-6px, 0);
+    transition: opacity .35s, transform .4s, color .35s;
+  }
+  .row:hover .row-name { transform: translateX(clamp(8px, 1.5vw, 22px)); }
+  .row:hover .row-ext  { opacity: 1; transform: translate(0, 0); color: #0a0a0a; }
 
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 16px;
+  .row-right {
+    display: flex;
+    align-items: center;
+    gap: clamp(16px, 2vw, 28px);
+    flex: none;
+  }
 
-            padding: 20px;
+  .row-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    letter-spacing: 0.02em;
+    color: #7c7a75;
+    opacity: 0;
+    transform: translateX(12px);
+    transition: opacity .4s cubic-bezier(.2,.7,.2,1), transform .4s cubic-bezier(.2,.7,.2,1);
+  }
+  .row-info b {
+    color: #0a0a0a;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .row-info .row-url { opacity: 0.7; }
+  .row:hover .row-info { opacity: 1; transform: translateX(0); }
 
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
+  .row-slot {
+    width: clamp(140px, 16vw, 232px);
+    height: clamp(86px, 9.5vw, 138px);
+    flex: none;
+    border: 1.5px solid #0a0a0a;
+    background-color: #e4e2dd;
+    background-image: repeating-linear-gradient(45deg, #d6d4ce 0 9px, #e4e2dd 9px 18px);
+    display: flex;
+    align-items: flex-end;
+    padding: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.5px;
+    color: #7c7a75;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0;
+    transform: translateX(18px) scale(.96);
+    transition: opacity .4s cubic-bezier(.2,.7,.2,1), transform .4s cubic-bezier(.2,.7,.2,1);
+  }
+  .row:hover .row-slot { opacity: 1; transform: translateX(0) scale(1); }
 
-            box-shadow: 0 0 25px rgba(255, 255, 255, 0.08);
-        }
+  /* ---- footer ---- */
+  .lab-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #7c7a75;
+  }
 
-        .project {
-            padding: 14px;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: 0.2s;
-            background: rgba(255, 255, 255, 0.05);
-            margin-bottom: 12px;
-        }
+  /* ---- touch / small screens ---- */
+  @media (hover: none), (max-width: 720px) {
+    .row { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .row-name { white-space: normal; }
+    .row-info { opacity: 1; transform: none; align-items: flex-start; text-align: left; flex-flow: row wrap; gap: 12px; }
+    .row-ext  { opacity: 1; transform: none; }
+    .row-slot { display: none; }
+    .row:hover .row-name { transform: none; }
+    .row-idx  { position: static; margin-bottom: 2px; }
+  }
 
-        .project:hover {
-            background: rgba(255, 255, 255, 0.12);
-            transform: translateX(6px);
-        }
-
-        .name {
-            font-size: 22px;
-            font-weight: bold;
-        }
-
-        .url {
-            font-size: 14px;
-            opacity: 0.6;
-            margin-top: 4px;
-        }
-    </style>
+  @media (prefers-reduced-motion: reduce) {
+    .row { animation: none; }
+  }
+</style>
 </head>
-
 <body>
+<div class="lab">
+  <header class="lab-top">
+    <span><b>lab</b> — selected work</span>
+    <span>jaacck · 2026</span>
+  </header>
 
-<video class="bg-video" autoplay muted loop playsinline>
-    <source src="bg2.mp4" type="video/mp4">
-</video>
+  <main class="lab-stack" id="stack"></main>
 
-<div class="terminal" id="list"></div>
+  <footer class="lab-foot">
+    <span id="entry-count"></span>
+    <span>scroll / open ↗</span>
+  </footer>
+</div>
 
 <script>
-const projects = [
-    { name: "Portfolio", url: "https://jaacck.me" },
-    { name: "stemmixer", url: "https://lab.jaacck.me/stemmixer" },
+const PROJECTS = [
+  { idx: "01", name: "Portfolio",  href: "https://jaacck.me",               url: "jaacck.me",               category: "Site",       year: "2025", status: "Live" },
+  { idx: "02", name: "stemmixer",  href: "https://lab.jaacck.me/stemmixer", url: "lab.jaacck.me/stemmixer", category: "Tool",       year: "2025", status: "Live" },
+  { idx: "03", name: "untitled",   href: "#",                               url: "lab.jaacck.me/—",         category: "Experiment", year: "2026", status: "WIP"  },
 ];
 
-const list = document.getElementById("list");
+const stack = document.getElementById("stack");
+document.getElementById("entry-count").textContent = `↳ ${PROJECTS.length} entries`;
 
-projects.forEach(p => {
-    const item = document.createElement("div");
-    item.className = "project";
+PROJECTS.forEach((p, i) => {
+  const a = document.createElement("a");
+  a.className = "row";
+  a.href = p.href;
+  if (p.href !== "#") { a.target = "_blank"; a.rel = "noreferrer"; }
+  a.style.animationDelay = `${0.06 + i * 0.09}s`;
 
-    item.innerHTML = `
-        <div class="name">${p.name}</div>
-        <div class="url">${p.url}</div>
-    `;
+  a.innerHTML = `
+    <span class="row-idx">${p.idx}</span>
+    <h2 class="row-name">${p.name}<span class="row-ext">↗</span></h2>
+    <div class="row-right">
+      <div class="row-info">
+        <b>${p.category}</b>
+        <span>${p.year}</span>
+        <span>${p.status}</span>
+        <span class="row-url">${p.url}</span>
+      </div>
+      <div class="row-slot">${p.name.toLowerCase()} — preview</div>
+    </div>
+  `;
 
-    item.onclick = () => {
-        window.location.href = p.url;
-    };
-
-    list.appendChild(item);
-});
-
-window.addEventListener("load", () => {
-    document.body.classList.add("loaded");
+  stack.appendChild(a);
 });
 </script>
-
 </body>
 </html>
