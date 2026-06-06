@@ -253,7 +253,34 @@ body.dark-flash{animation:dark-unlock .6s ease-out;}
 @keyframes throw-trail-fade{from{opacity:0.55;transform:translate(-50%,-50%) scale(1);}to{opacity:0;transform:translate(-50%,-50%) scale(2);}}
 .throw-trail{position:absolute;border-radius:50%;pointer-events:none;z-index:3;animation:throw-trail-fade .38s ease-out forwards;}
 
-/* ── Mobile ──────────────────────────────────────────────────── */
+/* ── 3D Studio ───────────────────────────────────────────────── */
+.spk-cab{
+  position:absolute;width:14px;height:20px;
+  border:1.5px solid rgba(128,64,255,0.45);border-radius:2px 2px 3px 3px;
+  background:rgba(128,64,255,0.07);display:none;transform:translate(-50%,-50%);
+  box-shadow:0 0 8px rgba(128,64,255,0.12),inset 0 1px 0 rgba(255,255,255,0.08);
+  pointer-events:none;z-index:2;
+}
+#pan-river-wrap.spatial-active .spk-cab{display:block;}
+.spk-cab::before{
+  content:'';position:absolute;left:50%;top:30%;width:6px;height:6px;
+  border-radius:50%;background:rgba(128,64,255,0.35);
+  transform:translate(-50%,-50%);
+}
+.spk-cab::after{
+  content:'';position:absolute;left:50%;bottom:28%;width:8px;height:10px;
+  border-radius:50%;background:rgba(128,64,255,0.15);border:1px solid rgba(128,64,255,0.3);
+  transform:translate(-50%,50%);
+}
+.spk-cab.firing{
+  border-color:rgba(128,64,255,0.85)!important;
+  box-shadow:0 0 16px rgba(128,64,255,0.4),inset 0 1px 0 rgba(255,255,255,0.15)!important;
+}
+/* monitor triangle lines */
+#spk-tri-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:1;}
+#pan-river-wrap.spatial-active #spk-tri-svg{display:block;}
+
+/* Mobile ──────────────────────────────────────────────────── */
 @media(max-width:699px){
   body{overflow:auto;touch-action:pan-x pan-y;}
   #app{flex-direction:column;height:auto;overflow:visible;}
@@ -413,6 +440,13 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
               <div class="spatial-guide h"></div>
               <div class="spatial-guide v"></div>
               <div id="listener-dot"></div>
+              <!-- 3D studio speaker cabinets -->
+              <div class="spk-cab" id="spk-left"  title="Left Monitor"></div>
+              <div class="spk-cab" id="spk-right" title="Right Monitor"></div>
+              <svg id="spk-tri-svg" viewBox="0 0 1 1" preserveAspectRatio="none">
+                <line id="spk-tri-l" stroke="rgba(128,64,255,0.1)" stroke-width="0.005" fill="none"/>
+                <line id="spk-tri-r" stroke="rgba(128,64,255,0.1)" stroke-width="0.005" fill="none"/>
+              </svg>
               <div class="spatial-dot" id="sp-vocals" data-label="vocals" style="background:#ff0066;"></div>
               <div class="spatial-dot" id="sp-drums"  data-label="drums"  style="background:#f5a623;"></div>
               <div class="spatial-dot" id="sp-bass"   data-label="bass"   style="background:#00b8ff;"></div>
@@ -596,6 +630,12 @@ let reverbSend=null,reverbNode=null,reverbGain=null;
 let delaySend=null,delayNode=null,delayFeedback=null,delayGain=null;
 let buffers={},srcNodes={},gainNodes={},pannerNodes={},analyserNodes={},eqData={};
 let stemDurations={},stemUrls={};
+// ── 3D Studio DSP & Physics ───────────────────────────────────
+const V_ROOM_W=4.0,V_HEAD_R=0.085,V_SOUND=343; // virtual meters
+const SPK_FX_L=0.18,SPK_FX_R=0.82,SPK_FY=0.13; // fractional position in spatial-view
+const SPHERE_R=8,RESTITUTION_WALL=0.72,RESTITUTION_SPHERE=0.82;
+const stem3dNodes={}; // per-stem 3D DSP node bundles
+let studio3dPhysInited=false;
 
 // ── Per-stem EQ nodes & values ────────────────────────────────
 const stemEqNodes={};    // { id: { low, mid, high } BiquadFilterNodes }
@@ -1142,7 +1182,12 @@ const TAU=Math.PI*2;
 const SPATIAL_DEFAULT_ANGLES=STEMS.reduce((acc,s,i)=>{acc[s.id]=(i/STEMS.length)*TAU;return acc;},{});
 const PAN_DEAD=0.07;
 function applySoftCenter(val){const abs=Math.abs(val);if(abs<PAN_DEAD){const t=abs/PAN_DEAD;return Math.sign(val)*PAN_DEAD*t*t;}return val;}
-function setSpatialViewActive(force){spatialViewActive=typeof force==='boolean'?force:!spatialViewActive;panRiverWrap.classList.toggle('spatial-active',spatialViewActive);if(!spatialViewActive){lastSpatialTap=0;BLEND_POOL.forEach(d=>d.style.display='none');blendPoolUsed=0;}}
+function setSpatialViewActive(force){
+  spatialViewActive=typeof force==='boolean'?force:!spatialViewActive;
+  panRiverWrap.classList.toggle('spatial-active',spatialViewActive);
+  if(!spatialViewActive){lastSpatialTap=0;BLEND_POOL.forEach(d=>d.style.display='none');blendPoolUsed=0;}
+  else{studio3dPhysInited=false;positionSpeakerCabinets();} // re-init on open
+}
 function normAngle(a){return((a%TAU)+TAU)%TAU;}
 function circDist(a,b){const d=Math.abs(normAngle(a)-normAngle(b));return Math.min(d,TAU-d);}
 function nearestAngleForPan(prevAngle,panVal){const clamped=Math.max(-1,Math.min(1,panVal));const a=Math.asin(clamped),b=Math.PI-a;return circDist(prevAngle,a)<=circDist(prevAngle,b)?normAngle(a):normAngle(b);}
@@ -1203,7 +1248,7 @@ window.addEventListener('mousemove',e=>onPanMove(e.clientX,e.clientY));
 window.addEventListener('mouseup',()=>{if(activePanId&&activePanSurface==='spatial')initThrowFromHistory(activePanId);activePanId=null;activePanSurface='river';});
 window.addEventListener('touchmove',e=>{if(activePanId){const touch=e.touches[0];if(panTouchTap.id===activePanId&&Math.hypot(touch.clientX-panTouchTap.startX,touch.clientY-panTouchTap.startY)>10)panTouchTap.moved=true;onPanMove(touch.clientX,touch.clientY);}},{passive:true});
 window.addEventListener('touchend',()=>{if(activePanId&&activePanSurface==='spatial')initThrowFromHistory(activePanId);activePanId=null;activePanSurface='river';panTouchTap={id:null,startX:0,startY:0,moved:false};});
-window.addEventListener('resize',()=>STEMS.forEach(s=>updateSpatialDotPos(s.id)));
+window.addEventListener('resize',()=>{STEMS.forEach(s=>updateSpatialDotPos(s.id));positionSpeakerCabinets();studio3dPhysInited=false;});
 
 // ── Drag group ────────────────────────────────────────────────
 let dragGroup={active:false,stems:new Set(),preSnap:{}};
@@ -1309,8 +1354,34 @@ function initCtx(){
     const eqHigh=actx.createBiquadFilter();eqHigh.type='highshelf';eqHigh.frequency.value=8000;eqHigh.gain.value=stemEqVals[s.id].high;
     // Phase invert (identity curve by default)
     const phInv=actx.createWaveShaper();phInv.curve=makeIdentityCurve();
-    // Chain: gain → phaseInvert → eqLow → eqMid → eqHigh → panner → analyser
-    g.connect(phInv);phInv.connect(eqLow);eqLow.connect(eqMid);eqMid.connect(eqHigh);eqHigh.connect(p);p.connect(an);
+    // ── 3D Studio pre-panner DSP ───────────────────────────────
+    const bndShelf=actx.createBiquadFilter();bndShelf.type='lowshelf';bndShelf.frequency.value=100;bndShelf.gain.value=0;
+    const offShelf=actx.createBiquadFilter();offShelf.type='highshelf';offShelf.frequency.value=4000;offShelf.gain.value=0;
+    const distGain=actx.createGain();distGain.gain.value=1;
+    // ── ITD/ILD speaker crosstalk block (post-panner stereo) ───
+    const xtalkSplit=actx.createChannelSplitter(2);
+    const xtalkDelLR=actx.createDelay(0.005);xtalkDelLR.delayTime.value=0.0003; // L→R cross-delay
+    const xtalkDelRL=actx.createDelay(0.005);xtalkDelRL.delayTime.value=0.0003; // R→L cross-delay
+    const xtalkHfLR=actx.createBiquadFilter();xtalkHfLR.type='highshelf';xtalkHfLR.frequency.value=1500;xtalkHfLR.gain.value=-8;
+    const xtalkHfRL=actx.createBiquadFilter();xtalkHfRL.type='highshelf';xtalkHfRL.frequency.value=1500;xtalkHfRL.gain.value=-8;
+    const xtalkGainLR=actx.createGain();xtalkGainLR.gain.value=0.08;
+    const xtalkGainRL=actx.createGain();xtalkGainRL.gain.value=0.08;
+    const xtalkMerge=actx.createChannelMerger(2);
+    // ── Early reflections (parallel path) ─────────────────────
+    const earlyConv=actx.createConvolver();earlyConv.buffer=createImpulseResponse(actx,0.06,5.0);
+    const earlyWet=actx.createGain();earlyWet.gain.value=0;
+    // ── Chain: gain→phInv→EQ→bndShelf→offShelf→distGain→panner
+    g.connect(phInv);phInv.connect(eqLow);eqLow.connect(eqMid);eqMid.connect(eqHigh);
+    eqHigh.connect(bndShelf);bndShelf.connect(offShelf);offShelf.connect(distGain);distGain.connect(p);
+    // ── panner→xtalkSplit→[direct L/R + cross-delays]→xtalkMerge→analyser
+    p.connect(xtalkSplit);
+    xtalkSplit.connect(xtalkMerge,0,0);xtalkSplit.connect(xtalkMerge,1,1); // direct L and R
+    xtalkSplit.connect(xtalkDelLR,0);xtalkDelLR.connect(xtalkHfLR);xtalkHfLR.connect(xtalkGainLR);xtalkGainLR.connect(xtalkMerge,0,1); // L→R
+    xtalkSplit.connect(xtalkDelRL,1);xtalkDelRL.connect(xtalkHfRL);xtalkHfRL.connect(xtalkGainRL);xtalkGainRL.connect(xtalkMerge,0,0); // R→L
+    xtalkMerge.connect(an);
+    // ── Early reflections: analyser→earlyWet→earlyConv→masterGain
+    an.connect(earlyWet);earlyWet.connect(earlyConv);earlyConv.connect(masterGain);
+    stem3dNodes[s.id]={bndShelf,offShelf,distGain,xtalkDelLR,xtalkDelRL,xtalkHfLR,xtalkHfRL,xtalkGainLR,xtalkGainRL,earlyWet};
     gainNodes[s.id]=g;pannerNodes[s.id]=p;analyserNodes[s.id]=an;
     stemEqNodes[s.id]={low:eqLow,mid:eqMid,high:eqHigh};
     phaseInvertNodes[s.id]=phInv;
@@ -2354,6 +2425,185 @@ function updateEqBars(){
   });
 }
 
+// ── 3D Studio: position speaker cabinet elements in spatial-view ──
+function positionSpeakerCabinets(){
+  const sv=spatialView;if(!sv)return;
+  const W=sv.clientWidth,H=sv.clientHeight;if(!W||!H)return;
+  const lx=W*SPK_FX_L,ly=H*SPK_FY,rx=W*SPK_FX_R,ry=H*SPK_FY;
+  const spkL=document.getElementById('spk-left'),spkR=document.getElementById('spk-right');
+  if(spkL){spkL.style.left=lx+'px';spkL.style.top=ly+'px';}
+  if(spkR){spkR.style.left=rx+'px';spkR.style.top=ry+'px';}
+  // Monitor triangle guide lines (SVG normalized coords)
+  const triL=document.getElementById('spk-tri-l'),triR=document.getElementById('spk-tri-r');
+  const cx=W*0.5,cy=H*0.5;
+  if(triL){triL.setAttribute('x1',lx/W);triL.setAttribute('y1',ly/H);triL.setAttribute('x2',cx/W);triL.setAttribute('y2',cy/H);}
+  if(triR){triR.setAttribute('x1',rx/W);triR.setAttribute('y1',ry/H);triR.setAttribute('x2',cx/W);triR.setAttribute('y2',cy/H);}
+}
+
+// ── 3D Studio: real-time psychoacoustic DSP parameter update ──
+function updateStem3dDSP(){
+  if(!actx||!spatialViewActive)return;
+  const sv=spatialView;if(!sv)return;
+  const W=sv.clientWidth,H=sv.clientHeight;if(!W||!H)return;
+  const now=actx.currentTime,TC=0.012;
+  const cx=W*0.5,cy=H*0.5,maxDist=Math.hypot(cx,cy);
+  const spkLx=W*SPK_FX_L,spkLy=H*SPK_FY,spkRx=W*SPK_FX_R,spkRy=H*SPK_FY;
+  const scaleM=V_ROOM_W/W; // pixels → virtual meters
+
+  STEMS.forEach(s=>{
+    const n=stem3dNodes[s.id];if(!n)return;
+    const el=document.getElementById('sp-'+s.id);
+    if(!el||el.style.display==='none')return;
+    const sx=parseFloat(el.style.left)||cx,sy=parseFloat(el.style.top)||cy;
+    const dx=sx-cx,dy=sy-cy;
+    const dist=Math.hypot(dx,dy);
+    const normDist=Math.min(1,dist/maxDist);
+
+    // 1. Inverse-distance gain attenuation
+    n.distGain.gain.setTargetAtTime(1/(1+normDist*2),now,TC);
+
+    // 2. Boundary loading: low-shelf bass buildup near canvas edges
+    const edgePx=Math.min(sx,W-sx,sy,H-sy);
+    const edgeNorm=Math.max(0,1-edgePx/(Math.min(W,H)*0.18));
+    n.bndShelf.gain.setTargetAtTime(6*edgeNorm,now,TC);
+
+    // 3. Off-axis HF rolloff from each speaker cabinet
+    function offAxisDb(spkX,spkY){
+      const fX=cx-spkX,fY=cy-spkY,fL=Math.hypot(fX,fY)||1;
+      const tX=sx-spkX,tY=sy-spkY,tL=Math.hypot(tX,tY)||1;
+      const cosA=(fX*tX+fY*tY)/(fL*tL);
+      return -9*Math.min(1,Math.acos(Math.max(-1,Math.min(1,cosA)))/(Math.PI/2));
+    }
+    n.offShelf.gain.setTargetAtTime((offAxisDb(spkLx,spkLy)+offAxisDb(spkRx,spkRy))*0.5,now,TC);
+
+    // 4. ITD: virtual source position → inter-aural time difference
+    const sx_m=(sx-cx)*scaleM,sy_m=(cy-sy)*scaleM; // forward = +sy_m
+    const dL=Math.hypot(sx_m+V_HEAD_R,sy_m)||0.001; // dist to left ear
+    const dR=Math.hypot(sx_m-V_HEAD_R,sy_m)||0.001; // dist to right ear
+    const itd=(dR-dL)/V_SOUND; // >0 = stem on left = right ear is farther
+    const absITD=Math.min(Math.abs(itd),0.0007);
+    // Cross-delays: base 0.3ms + directional component
+    n.xtalkDelLR.delayTime.setTargetAtTime(0.0003+Math.max(0,itd),now,TC);
+    n.xtalkDelRL.delayTime.setTargetAtTime(0.0003+Math.max(0,-itd),now,TC);
+    // ILD: stronger head-shadow on far-ear crosstalk path when strongly lateral
+    const ildDb=-8-6*Math.min(1,absITD/0.0005);
+    n.xtalkHfLR.gain.setTargetAtTime(ildDb,now,TC);
+    n.xtalkHfRL.gain.setTargetAtTime(ildDb,now,TC);
+    // Crosstalk gain: reduces with extreme lateralization (more directional)
+    const xg=0.08*(1-Math.min(1,absITD/0.0005)*0.55);
+    n.xtalkGainLR.gain.setTargetAtTime(xg,now,TC);
+    n.xtalkGainRL.gain.setTargetAtTime(xg,now,TC);
+
+    // 5. Early reflections wet: increases with distance from listener
+    n.earlyWet.gain.setTargetAtTime(0.22*normDist,now,TC);
+  });
+}
+
+// ── 3D Studio: elastic boundary & sphere-sphere physics ──────
+function updateStem3dPhysics(){
+  if(!spatialViewActive||orbitActive)return;
+  const sv=spatialView;if(!sv)return;
+  const W=sv.clientWidth,H=sv.clientHeight;if(!W||!H)return;
+
+  // Lazily init throwStates for stems that are resting (ensure x/y are in-bounds)
+  if(!studio3dPhysInited){
+    const{cx,cy,radius}=spatialMetrics();
+    STEMS.forEach(s=>{
+      const ts=throwStates[s.id];
+      if(!ts.x&&!ts.y){
+        const a=spatialAngles[s.id]??SPATIAL_DEFAULT_ANGLES[s.id]??0;
+        ts.x=cx+Math.sin(a)*radius*0.55;ts.y=cy-Math.cos(a)*radius*0.55;
+        ts.vx=(Math.random()-0.5)*0.3;ts.vy=(Math.random()-0.5)*0.3;
+      }
+    });
+    studio3dPhysInited=true;
+  }
+
+  const activeIds=STEMS.map(s=>s.id).filter(id=>{
+    const el=document.getElementById('sp-'+id);return el&&el.style.display!=='none';
+  });
+
+  // Read current world positions (throw-state positions are authoritative)
+  const pos={},vel={};
+  activeIds.forEach(id=>{
+    const ts=throwStates[id];
+    const el=document.getElementById('sp-'+id);
+    const ex=parseFloat(el?.style.left)||W/2,ey=parseFloat(el?.style.top)||H/2;
+    pos[id]={x:ts.x||ex,y:ts.y||ey};
+    vel[id]={x:ts.vx||0,y:ts.vy||0};
+  });
+
+  // ── Sphere-sphere elastic collision ───────────────────────────
+  for(let i=0;i<activeIds.length;i++){
+    for(let j=i+1;j<activeIds.length;j++){
+      const a=activeIds[i],b=activeIds[j];
+      const pa=pos[a],pb=pos[b];if(!pa||!pb)continue;
+      const dx=pb.x-pa.x,dy=pb.y-pa.y;
+      const dist=Math.hypot(dx,dy)||0.001;
+      const minD=SPHERE_R*2.6; // slightly larger than visual radius
+      if(dist<minD){
+        const nx=dx/dist,ny=dy/dist;
+        // Separate overlapping spheres
+        const sep=(minD-dist)*0.5;
+        pa.x-=nx*sep;pa.y-=ny*sep;
+        pb.x+=nx*sep;pb.y+=ny*sep;
+        // Equal-mass elastic collision: exchange normal velocity components
+        const dvx=vel[a].x-vel[b].x,dvy=vel[a].y-vel[b].y;
+        const relN=dvx*nx+dvy*ny;
+        if(relN>0){
+          const imp=relN*RESTITUTION_SPHERE;
+          vel[a].x-=imp*nx;vel[a].y-=imp*ny;
+          vel[b].x+=imp*nx;vel[b].y+=imp*ny;
+        }
+        // Ensure both spheres have active throw states so motion continues
+        [a,b].forEach(id=>{
+          throwStates[id].active=true;
+          throwStates[id].x=pos[id].x;throwStates[id].y=pos[id].y;
+          throwStates[id].vx=vel[id].x;throwStates[id].vy=vel[id].y;
+        });
+        // Bass transient on impact
+        if(actx){
+          const now=actx.currentTime;
+          [a,b].forEach(id=>{
+            const n=stem3dNodes[id];if(!n)return;
+            n.bndShelf.gain.cancelScheduledValues(now);
+            n.bndShelf.gain.setValueAtTime(9,now);
+            n.bndShelf.gain.setTargetAtTime(0,now+0.02,0.045);
+          });
+        }
+        spatialDirty=true;
+      }
+    }
+  }
+
+  // ── Rectangular boundary elastic rebound ──────────────────────
+  activeIds.forEach(id=>{
+    const p=pos[id],v=vel[id];if(!p)return;
+    const ts=throwStates[id];
+    // Read live position from DOM (set by updateThrow / updateSpatialDotPos)
+    const el=document.getElementById('sp-'+id);
+    const lx=parseFloat(el?.style.left)||p.x;
+    const ly=parseFloat(el?.style.top)||p.y;
+    p.x=lx;p.y=ly;
+
+    let hitWall=false;
+    if(p.x<SPHERE_R){p.x=SPHERE_R;v.x=Math.abs(v.x)*RESTITUTION_WALL;hitWall=true;}
+    if(p.x>W-SPHERE_R){p.x=W-SPHERE_R;v.x=-Math.abs(v.x)*RESTITUTION_WALL;hitWall=true;}
+    if(p.y<SPHERE_R){p.y=SPHERE_R;v.y=Math.abs(v.y)*RESTITUTION_WALL;hitWall=true;}
+    if(p.y>H-SPHERE_R){p.y=H-SPHERE_R;v.y=-Math.abs(v.y)*RESTITUTION_WALL;hitWall=true;}
+
+    if(hitWall){
+      // Kick the throw state with reflected velocity so it continues after bounce
+      ts.active=true;ts.x=p.x;ts.y=p.y;ts.vx=v.x;ts.vy=v.y;
+      if(actx){
+        const now=actx.currentTime;const n=stem3dNodes[id];
+        if(n){n.bndShelf.gain.cancelScheduledValues(now);n.bndShelf.gain.setValueAtTime(7,now);n.bndShelf.gain.setTargetAtTime(0,now+0.015,0.055);}
+      }
+      spatialDirty=true;
+    }
+  });
+}
+
 // Update animate to include new features
 function animate(now=performance.now()){
   requestAnimationFrame(animate);
@@ -2365,7 +2615,8 @@ function animate(now=performance.now()){
   if(now-eqLastTs>=eqCadence){updateEqBars();updateMasterMeter();updateSpectrograms();updateLissajous();updateVuSparkline();eqLastTs=now;}
   if(now-colEqLastTs>=eqCadence){updateColEq();colEqLastTs=now;}
   updateCenterDotMotion();
-  updateOrbit();updateThrow();if(spatialDirty){checkSpatialCollisions();spatialDirty=false;}
+  updateOrbit();updateThrow();updateStem3dPhysics();if(spatialDirty){checkSpatialCollisions();spatialDirty=false;}
+  updateStem3dDSP();
   updateSidechain();
   STEMS.forEach(s=>{
     const rs=rainbowState[s.id];
