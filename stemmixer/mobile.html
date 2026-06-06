@@ -330,6 +330,17 @@ body.dark-flash{animation:dark-unlock .6s ease-out;}
   <button id="reset-btn" title="Clear all loaded stems">reset mix</button>
   <button id="clarity-btn" title="Toggle Magic Clarity DSP chain">✦ magic clarity</button>
   <button id="fs-btn" title="Toggle Fullscreen"><span id="fs-icon"></span>fullscreen</button>
+  <button id="share-btn" title="Copy shareable mix link">share</button>
+  <button id="tap-btn" title="Tap tempo">tap</button>
+  <span id="bpm-display" style="font-size:8px;letter-spacing:.14em;color:var(--hint);display:inline-block;">-- bpm</span>
+  <button id="ab-save-a" title="Save A" style="font-size:7px;letter-spacing:.14em;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:8px;cursor:pointer;padding:4px 6px;-webkit-tap-highlight-color:transparent;">save A</button>
+  <button id="ab-save-b" title="Save B" style="font-size:7px;letter-spacing:.14em;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:8px;cursor:pointer;padding:4px 6px;-webkit-tap-highlight-color:transparent;">save B</button>
+  <button id="ab-toggle" disabled title="Toggle A/B compare" style="font-size:7px;letter-spacing:.14em;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:8px;cursor:pointer;padding:4px 6px;opacity:0.35;-webkit-tap-highlight-color:transparent;">A / B</button>
+</div>
+<div style="display:flex;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:4px;">
+  <span style="font-size:7px;letter-spacing:.18em;color:var(--hint);text-transform:uppercase;">speed</span>
+  <input type="range" id="master-speed" min="0.5" max="2.0" value="1.0" step="0.01" style="-webkit-appearance:none;appearance:none;width:80px;height:2px;background:var(--seg-off);border-radius:2px;cursor:pointer;outline:none;">
+  <span id="speed-val" style="font-size:7px;letter-spacing:.1em;color:var(--hint);font-family:monospace;">1.00×</span>
 </div>
 
 <div id="pan-river-wrap">
@@ -1527,6 +1538,129 @@ function animate(){
 function updateTimeDisplay(){if(!playing)document.getElementById('time').textContent='0:00 / '+fmt(duration);}
 function fmt(s){const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+(sc<10?'0':'')+sc;}
 function setStatus(msg){document.getElementById('status').textContent=msg;}
+
+// ── New mobile features ───────────────────────────────────────
+
+// Feature 1 (mobile): Varispeed
+let masterSpeed = 1.0;
+const stemPitchVals = {};
+STEMS.forEach(s => { stemPitchVals[s.id] = 0; });
+
+function applyPlaybackRate(id) {
+  const el = buffers[id]; if (!el) return;
+  const pitchRate = Math.pow(2, (stemPitchVals[id] || 0) / 12);
+  el.playbackRate = masterSpeed * pitchRate;
+}
+
+(function() {
+  const spEl = document.getElementById('master-speed');
+  const spVal = document.getElementById('speed-val');
+  if (spEl) spEl.addEventListener('input', () => {
+    masterSpeed = parseFloat(spEl.value);
+    if (spVal) spVal.textContent = masterSpeed.toFixed(2) + '×';
+    STEMS.forEach(s => { if (buffers[s.id]) applyPlaybackRate(s.id); });
+  });
+})();
+
+// Apply speed when playing
+const _origPlayAll = playAll;
+function playAll() {
+  if (!hasAnyStem()) return;
+  if (actx.state === 'suspended') actx.resume(); patchIOSOutput();
+  const off = pauseOff;
+  STEMS.forEach(s => {
+    const el = buffers[s.id]; if (!el) return;
+    setStemTime(s.id, off);
+    el.loop = isLooping && loopIn <= 0 && loopOut >= 100;
+    applyPlaybackRate(s.id);
+    const p = el.play(); if (p && p.catch) p.catch(() => {});
+  });
+  startTime = actx.currentTime - off; playing = true; dot.classList.add('playing');
+  STEMS.forEach(s => applyVol(s.id));
+}
+
+// Feature 2 (mobile): BPM tap tempo
+let tapTimes = [], bpmVal = null;
+(function() {
+  const tapBtn = document.getElementById('tap-btn');
+  const bpmDisp = document.getElementById('bpm-display');
+  if (!tapBtn) return;
+  tapBtn.addEventListener('click', () => {
+    const now = performance.now(); tapTimes.push(now); if (tapTimes.length > 8) tapTimes.shift();
+    if (tapTimes.length >= 2) {
+      let sum = 0; for (let i = 1; i < tapTimes.length; i++) sum += tapTimes[i] - tapTimes[i - 1];
+      const avg = sum / (tapTimes.length - 1);
+      const bpm = Math.max(40, Math.min(220, 60000 / avg));
+      bpmVal = bpm; orbitSpeedScale = bpm / 120 * 0.4;
+      if (bpmDisp) bpmDisp.textContent = Math.round(bpm) + ' bpm';
+    }
+  });
+})();
+
+// Feature 5 (mobile): A/B compare
+function serializeMixMobile() {
+  return {
+    vols: {...vols}, muted: {...muted}, panVals: {...panVals},
+    masterSpeed,
+  };
+}
+function restoreMixMobile(state) {
+  if (!state) return;
+  Object.assign(vols, state.vols || {}); Object.assign(muted, state.muted || {}); Object.assign(panVals, state.panVals || {});
+  STEMS.forEach(s => {
+    refreshCol(s.id); applyVol(s.id);
+    setPanDropPos(s.id, panVals[s.id] || 0);
+    if (pannerNodes[s.id] && actx) pannerNodes[s.id].pan.setTargetAtTime(panVals[s.id] || 0, actx.currentTime, 0.04);
+  });
+  masterSpeed = state.masterSpeed || 1.0;
+  const spEl = document.getElementById('master-speed'); if (spEl) spEl.value = masterSpeed;
+  const spVal = document.getElementById('speed-val'); if (spVal) spVal.textContent = masterSpeed.toFixed(2) + '×';
+  STEMS.forEach(s => applyPlaybackRate(s.id));
+}
+const abSlots = {A: null, B: null}; let abActive = null;
+(function() {
+  document.getElementById('ab-save-a')?.addEventListener('click', () => {
+    abSlots.A = serializeMixMobile();
+    document.getElementById('ab-save-a').style.color = '#8040ff';
+    if (abSlots.A && abSlots.B) { const t = document.getElementById('ab-toggle'); if(t){t.disabled=false;t.style.opacity='1';} }
+    setStatus('Saved A'); setTimeout(() => setStatus(''), 1200);
+  });
+  document.getElementById('ab-save-b')?.addEventListener('click', () => {
+    abSlots.B = serializeMixMobile();
+    document.getElementById('ab-save-b').style.color = '#8040ff';
+    if (abSlots.A && abSlots.B) { const t = document.getElementById('ab-toggle'); if(t){t.disabled=false;t.style.opacity='1';} }
+    setStatus('Saved B'); setTimeout(() => setStatus(''), 1200);
+  });
+  document.getElementById('ab-toggle')?.addEventListener('click', () => {
+    if (!abSlots.A || !abSlots.B) return;
+    abActive = abActive === 'A' ? 'B' : 'A';
+    document.getElementById('ab-toggle').textContent = 'A/B(' + abActive + ')';
+    restoreMixMobile(abSlots[abActive]);
+    setStatus('Comparing ' + abActive); setTimeout(() => setStatus(''), 1200);
+  });
+})();
+
+// Feature 25 (mobile): Shareable mix link
+(function() {
+  document.getElementById('share-btn')?.addEventListener('click', () => {
+    const state = {
+      vols: {...vols}, muted: {...muted}, panVals: {...panVals}, masterSpeed,
+    };
+    try {
+      const encoded = btoa(JSON.stringify(state));
+      location.hash = '#mix=' + encoded;
+      navigator.clipboard?.writeText(location.href).catch(() => {});
+      setStatus('Link copied!'); setTimeout(() => setStatus(''), 2000);
+    } catch(e) { setStatus('Share failed'); setTimeout(() => setStatus(''), 1500); }
+  });
+  // Apply pending mix from hash
+  if (location.hash.startsWith('#mix=')) {
+    try {
+      const state = JSON.parse(atob(location.hash.slice(5)));
+      window._pendingMixStateMobile = state;
+    } catch(e) {}
+  }
+})();
 
 animate();
 </script>
