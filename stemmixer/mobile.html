@@ -317,6 +317,7 @@ body.safari-goo-fallback #pan-drops-goo{filter:none;-webkit-filter:none;}
   100%{box-shadow:0 0 0 0 rgba(128,64,255,0);}
 }
 body.dark-flash{animation:dark-unlock .6s ease-out;}
+.ch-label.kb-solo{color:#8040ff!important;}
 </style>
 </head>
 <body>
@@ -707,6 +708,9 @@ function setDarkMode(on){
     setTimeout(()=>document.body.classList.remove('dark-flash'),700);
   }
 }
+const _mq=window.matchMedia('(prefers-color-scheme: dark)');
+if(_mq.matches)setDarkMode(true);
+_mq.addEventListener('change',e=>setDarkMode(e.matches));
 
 function applyTitleIdx(){
   const tr=TRANSLATIONS[titleIdx];
@@ -971,6 +975,7 @@ window.addEventListener('touchmove',e=>{
 },{passive:true});
 window.addEventListener('touchend',()=>{activePanId=null;activePanSurface='river';panTouchTap={id:null,startX:0,startY:0,moved:false};});
 
+const segCache={};
 STEMS.forEach(s=>{
   const ch=document.createElement('div');ch.className='channel';ch.id='ch-'+s.id;
   const segsEl=document.createElement('div');segsEl.className='ch-segs';segsEl.id='segs-'+s.id;
@@ -988,6 +993,7 @@ STEMS.forEach(s=>{
     });
     segsEl.appendChild(hit);
   }
+  segCache[s.id]={hits:[...segsEl.querySelectorAll('.seg-hit')],pills:[...segsEl.querySelectorAll('.seg')],fills:[...segsEl.querySelectorAll('.seg-fill')]};
 
   function onFaderDown(clientX,clientY){
     colDrag={active:true,id:s.id,startX:clientX,startY:clientY,startVol:vols[s.id],moved:false};
@@ -1250,8 +1256,9 @@ function endHold(){
 
 function refreshCol(id){
   const s=STEMS.find(x=>x.id===id);
-  document.querySelectorAll('#segs-'+id+' .seg-hit').forEach((hit,i)=>{
-    const pill=hit.querySelector('.seg');const on=i<vols[id];
+  const cache=segCache[id];if(!cache)return;
+  cache.hits.forEach((hit,i)=>{
+    const pill=cache.pills[i];const on=i<vols[id];
     hit.classList.toggle('muted',muted[id]);
     if(pill)pill.style.background=on?(muted[id]?s.acc+'33':s.acc+'cc'):'var(--seg-off)';
   });
@@ -1336,13 +1343,13 @@ function updateColEq(){
   STEMS.forEach(s=>{
     const an=analyserNodes[s.id];if(!an)return;
     const data=eqData[s.id];if(!data)return;
-    const base=hexToRgb(s.acc);
-    document.querySelectorAll('#segs-'+s.id+' .seg-hit').forEach((hit,i)=>{
-      const btn=hit.querySelector('.seg');if(!btn)return;
+    const base=hexToRgb(s.acc);const cache=segCache[s.id];if(!cache)return;
+    cache.hits.forEach((hit,i)=>{
+      const btn=cache.pills[i];if(!btn)return;
       const raw=playing&&buffers[s.id]?getSegBandEnergy(s.id,i):0;
       eqSmooth[s.id][i]=raw>eqSmooth[s.id][i]?raw*.7+eqSmooth[s.id][i]*.3:raw*.1+eqSmooth[s.id][i]*.9;
       const level=muted[s.id]?0:eqSmooth[s.id][i];
-      const fill=document.getElementById(`sf-${s.id}-${i}`);
+      const fill=cache.fills[i];
       if(fill){fill.style.opacity=level>0.04?'0.9':'0';fill.style.height=Math.round(level*100)+'%';}
       if(rainbowState[s.id]?.active)return;
       const on=i<vols[s.id];
@@ -1390,9 +1397,15 @@ document.addEventListener('keydown',e=>{
 });
 
 function soloByIndex(idx){
-  if(!hasAnyStem())return;const id=STEMS[idx]?.id;if(!id||!buffers[id])return;
-  if(kbSolo===id){STEMS.forEach(s=>{muted[s.id]=false;vols[s.id]=STEPS;document.getElementById('eq-'+s.id)?.classList.remove('muted');refreshCol(s.id);applyVol(s.id);});kbSolo=null;}
-  else{kbSolo=id;STEMS.forEach(s=>{muted[s.id]=(s.id!==id);vols[s.id]=muted[s.id]?1:STEPS;document.getElementById('eq-'+s.id)?.classList.toggle('muted',muted[s.id]);refreshCol(s.id);applyVol(s.id);});}
+  if(!hasAnyStem())return;const id=STEMS[idx]?.id;
+  if(!id||!buffers[id]){setStatus('Channel '+(idx+1)+' is empty');setTimeout(()=>setStatus(''),1200);return;}
+  if(kbSolo===id){
+    STEMS.forEach(s=>{muted[s.id]=false;vols[s.id]=STEPS;document.getElementById('eq-'+s.id)?.classList.remove('muted');refreshCol(s.id);applyVol(s.id);const lbl=document.getElementById('lbl-'+s.id);if(lbl)lbl.classList.remove('kb-solo');});
+    kbSolo=null;
+  }else{
+    kbSolo=id;
+    STEMS.forEach(s=>{muted[s.id]=(s.id!==id);vols[s.id]=muted[s.id]?1:STEPS;document.getElementById('eq-'+s.id)?.classList.toggle('muted',muted[s.id]);refreshCol(s.id);applyVol(s.id);const lbl=document.getElementById('lbl-'+s.id);if(lbl)lbl.classList.toggle('kb-solo',s.id===id);});
+  }
 }
 
 const progWrap=document.getElementById('prog-wrap');
