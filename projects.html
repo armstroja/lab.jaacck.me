@@ -142,27 +142,6 @@
   .row-info .row-url { opacity: 0.7; }
   .row:hover .row-info { opacity: 1; transform: translateX(0); }
 
-  .row-slot {
-    width: clamp(140px, 16vw, 232px);
-    height: clamp(86px, 9.5vw, 138px);
-    flex: none;
-    border: 1.5px solid #0a0a0a;
-    background-color: #e4e2dd;
-    background-image: repeating-linear-gradient(45deg, #d6d4ce 0 9px, #e4e2dd 9px 18px);
-    display: flex;
-    align-items: flex-end;
-    padding: 9px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9.5px;
-    color: #7c7a75;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    opacity: 0;
-    transform: translateX(18px) scale(.96);
-    transition: opacity .4s cubic-bezier(.2,.7,.2,1), transform .4s cubic-bezier(.2,.7,.2,1);
-  }
-  .row:hover .row-slot { opacity: 1; transform: translateX(0) scale(1); }
-
   /* ---- footer ---- */
   .lab-foot {
     display: flex;
@@ -181,7 +160,6 @@
     .row-name { white-space: normal; }
     .row-info { opacity: 1; transform: none; align-items: flex-start; text-align: left; flex-flow: row wrap; gap: 12px; }
     .row-ext  { opacity: 1; transform: none; }
-    .row-slot { display: none; }
     .row:hover .row-name { transform: none; }
     .row-idx  { position: static; margin-bottom: 2px; }
   }
@@ -233,7 +211,6 @@ PROJECTS.forEach((p, i) => {
         <span>${p.status}</span>
         <span class="row-url">${p.url}</span>
       </div>
-      <div class="row-slot">${p.name.toLowerCase()} — preview</div>
     </div>
   `;
 
