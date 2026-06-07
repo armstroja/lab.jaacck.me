@@ -319,6 +319,39 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
 #ab-toggle{width:100%;font-size:7px;letter-spacing:.18em;text-transform:lowercase;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:8px;cursor:pointer;padding:4px 8px;transition:color .2s,border-color .2s,background .2s;margin-top:4px;}
 #ab-toggle:disabled{opacity:0.35;cursor:not-allowed;}
 #ab-toggle.active{color:#8040ff;border-color:#8040ff;background:rgba(128,64,255,0.08);}
+
+/* ── Gain reduction meter ───────────────────────────────────── */
+.gr-meter-wrap{display:flex;align-items:center;gap:5px;margin-top:3px;}
+.gr-meter-label{font-size:6.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--hint);}
+.gr-meter-bar{flex:1;height:4px;background:var(--seg-off);border-radius:2px;overflow:hidden;}
+.gr-meter-fill{height:100%;background:#8040ff;width:0%;transition:width .06s linear;border-radius:2px;}
+.gr-meter-val{font-size:6.5px;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;color:var(--hint);min-width:32px;text-align:right;}
+/* ── Preset browser ─────────────────────────────────────────── */
+.preset-row{display:flex;gap:5px;align-items:center;margin-top:2px;}
+#preset-name{font-size:7px;flex:1;background:transparent;border:1px solid var(--card-border);border-radius:6px;padding:3px 6px;color:var(--text);outline:none;letter-spacing:.08em;}
+#preset-name:focus{border-color:rgba(128,64,255,.35);}
+#preset-save-btn,#preset-del-btn{font-size:7px;letter-spacing:.14em;text-transform:lowercase;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:6px;cursor:pointer;padding:3px 6px;transition:color .2s,border-color .2s;white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+#preset-save-btn:hover{color:#8040ff;border-color:#8040ff;}
+#preset-del-btn:hover{color:#ff2244;border-color:#ff2244;}
+#preset-list{font-size:7px;letter-spacing:.12em;color:var(--muted);background:var(--card-bg);border:1px solid var(--card-border);border-radius:7px;padding:3px 6px;outline:none;cursor:pointer;width:100%;margin-top:3px;}
+/* ── Pitch lock ─────────────────────────────────────────────── */
+.pitch-lock-row{display:flex;align-items:center;gap:5px;margin-top:3px;}
+.pitch-key-sel{font-size:7px;letter-spacing:.08em;color:var(--muted);background:transparent;border:1px solid var(--card-border);border-radius:6px;padding:2px 5px;outline:none;cursor:pointer;flex:1;}
+.pitch-lock-btn{font-size:7px;letter-spacing:.18em;text-transform:lowercase;color:var(--hint);background:none;border:1px solid var(--card-border);border-radius:7px;cursor:pointer;padding:3px 7px;transition:color .2s,border-color .2s,background .2s;-webkit-tap-highlight-color:transparent;}
+.pitch-lock-btn.active{color:#8040ff;border-color:#8040ff;background:rgba(128,64,255,.08);}
+/* ── Beat-sync loop ─────────────────────────────────────────── */
+.beat-sync-wrap{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+.beat-sync-sel{font-size:7px;letter-spacing:.08em;color:var(--muted);background:transparent;border:1px solid var(--card-border);border-radius:6px;padding:2px 5px;outline:none;cursor:pointer;}
+#beat-sync-btn{font-size:7.5px;letter-spacing:.22em;text-transform:lowercase;color:var(--link-color);background:none;border:1px solid var(--card-border);border-radius:10px;cursor:pointer;padding:4px 9px;transition:color .2s,border-color .2s,background .2s;-webkit-tap-highlight-color:transparent;}
+#beat-sync-btn:hover{color:var(--link-hover);}
+#beat-sync-btn.active{color:#8040ff;border-color:#8040ff;background:rgba(128,64,255,.08);}
+/* ── MIDI clock indicator ───────────────────────────────────── */
+#midi-clock-indicator{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--seg-off);margin-left:5px;vertical-align:middle;transition:background .1s;}
+#midi-clock-indicator.active{background:#8040ff;}
+/* ── Waveform scrub cursor ──────────────────────────────────── */
+.waveform-canvas.scrub-enabled{pointer-events:auto;cursor:ew-resize;}
+.waveform-canvas{opacity:0.75;}
+.waveform-canvas.playing{opacity:0.15;}
 </style>
 </head>
 <body>
@@ -356,6 +389,12 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
       <button id="share-btn" class="trans-btn" title="Copy shareable link">share</button>
       <button id="snapshot-btn" class="trans-btn" title="Save named snapshot">snapshot</button>
       <select id="snapshot-list" title="Recall snapshot"><option value="">— snapshots —</option></select>
+      <div class="preset-row">
+        <input type="text" id="preset-name" placeholder="preset name…" autocomplete="off">
+        <button id="preset-save-btn" title="Save preset to local storage">save</button>
+        <button id="preset-del-btn" title="Delete selected preset">del</button>
+      </div>
+      <select id="preset-list" title="Load preset"><option value="">— presets —</option></select>
       <button id="undo-btn" class="trans-btn" title="Undo (Ctrl+Z)">undo</button>
       <button id="midi-btn" class="trans-btn" title="MIDI learn mode">midi</button>
       <div class="ab-btns">
@@ -424,6 +463,15 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
     </div>
     <div id="transport">
       <button id="loop-btn" class="trans-btn" title="Toggle Loop">loop</button>
+      <div class="beat-sync-wrap">
+        <button id="beat-sync-btn" title="Snap loop to BPM grid">grid</button>
+        <select id="beat-sync-bars" class="beat-sync-sel">
+          <option value="1">1 bar</option>
+          <option value="2">2 bars</option>
+          <option value="4" selected>4 bars</option>
+          <option value="8">8 bars</option>
+        </select>
+      </div>
       <div id="prog-wrap">
         <div id="prog-track">
           <div id="prog-loop-region"></div>
@@ -449,6 +497,7 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
         <input type="range" id="master-vol" min="0" max="300" value="85">
       </div>
       <button id="master-comp" class="studio-toggle" title="Toggle master compressor">compressor</button>
+      <div class="gr-meter-wrap"><span class="gr-meter-label">gr</span><div class="gr-meter-bar"><div id="gr-meter-fill" class="gr-meter-fill"></div></div><span class="gr-meter-val" id="gr-meter-val">0 dB</span></div>
     </div>
     <div class="studio-section">
       <div class="studio-title">eq</div>
@@ -491,6 +540,7 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
         <button id="tap-btn" class="studio-toggle" style="flex:1;">tap</button>
         <span id="bpm-display" style="font-size:8px;letter-spacing:.14em;color:var(--hint);min-width:44px;">-- bpm</span>
       </div>
+      <button id="midi-clock-btn" class="studio-toggle" title="Sync tempo from MIDI clock">midi clock<span id="midi-clock-indicator"></span></button>
     </div>
     <div class="studio-section">
       <div class="studio-title">spatial</div>
@@ -957,6 +1007,16 @@ STEMS.forEach(s=>{
       <input type="range" class="strip-extra-slider" id="spitch-${s.id}" min="-7" max="7" value="0" step="0.5">
       <span class="strip-extra-val" id="spitchv-${s.id}">0</span>
     </div>
+    <div class="pitch-lock-row">
+      <select class="pitch-key-sel" id="spkey-${s.id}">
+        <option value="">key</option>
+        <option value="0">C</option><option value="1">C#</option><option value="2">D</option>
+        <option value="3">D#</option><option value="4">E</option><option value="5">F</option>
+        <option value="6">F#</option><option value="7">G</option><option value="8">G#</option>
+        <option value="9">A</option><option value="10">A#</option><option value="11">B</option>
+      </select>
+      <button class="pitch-lock-btn" id="splock-${s.id}" title="Quantize pitch to selected key scale">lock</button>
+    </div>
     <div class="strip-extra-row">
       <span class="strip-extra-label">rev</span>
       <input type="range" class="strip-extra-slider" id="srev-${s.id}" min="0" max="100" value="0">
@@ -1291,6 +1351,7 @@ function buildEqCard(id,name){
   (document.getElementById('eq-'+id)||document.getElementById('dz-'+id)).replaceWith(card);
   // Draw waveform if data available
   if(waveformData[id])drawWaveformCanvas(id);
+  enableWaveformScrub(id);
 }
 
 // ── Audio context ─────────────────────────────────────────────
@@ -2150,7 +2211,9 @@ function initMidi(){
   }).catch(()=>{});
 }
 function onMidiMsg(msg){
-  const[status,cc,val]=msg.data;if((status&0xf0)!==0xb0)return;// CC only
+  const[status,cc,val]=msg.data;
+  if(status===0xF8){onMidiClock();return;}
+  if((status&0xf0)!==0xb0)return;// CC only
   if(midiLearnMode&&midiLearnTarget){
     midiMap[cc]=midiLearnTarget;midiLearnTarget=null;midiLearnMode=false;
     document.getElementById('midi-btn')?.classList.remove('active');
