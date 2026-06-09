@@ -263,17 +263,20 @@
         bar.style.backgroundColor = color + 'cc';
     });
 
-    function animateBars() {
+    let _barsLastTs=0;
+    function animateBars(now=0) {
+        requestAnimationFrame(animateBars);
+        if(document.hidden||now-_barsLastTs<150)return;
+        _barsLastTs=now;
         STEM_COLORS.forEach((color, i) => {
             const bar = document.getElementById(`bar-${i}`);
             const randomHeight = Math.floor(Math.random() * 50) + 10;
             bar.style.height = `${randomHeight}px`;
             bar.style.backgroundColor = Math.random() > 0.8 ? color : color + 'cc';
         });
-        setTimeout(animateBars, 150);
     }
 
-    animateBars();
+    requestAnimationFrame(animateBars);
 
     window.addEventListener('mousemove', (e) => {
         const moveX = (e.clientX - window.innerWidth / 2) * 0.01;

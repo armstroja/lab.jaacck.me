@@ -602,13 +602,12 @@ let abSlots={A:null,B:null},abActive=null;
 const undoStack=[],redoStack=[];let undoPointer=-1;const MAX_UNDO=20;
 const namedSnapshots=[];
 let midiMap={},midiLearnTarget=null,midiAccess=null,midiLearnMode=false;
-let cueStem=null,cueCtx=null,cueSrc=null,cueGain=null;
+let cueStem=null,cueCtx=null,cueSrc=null,cueGain=null,cueTap=null;
 let spectrogramMode={};const spectrogramData={};
 const waveformData={};
 const clipTimers={};
 const vuRingBuf=new Float32Array(150);let vuRingIdx=0;
 let lissLAnalyser=null,lissRAnalyser=null,lissSplitter=null;
-const pendingMixState=null;
 const STEMS=[
   {id:'vocals',label:'Vocals',acc:'#ff0066'},
   {id:'drums', label:'Drums', acc:'#f5a623'},
@@ -843,6 +842,13 @@ function applyMasterFxSettings(){
 let clarityActive=false;
 const clarityNodes={};
 let clarityCompressor=null,claritySoftClipper=null,clarityMasterWet=null;
+// Export-time Clarity config — mirrors what setMagicClarity applies when active
+const EXPORT_CLARITY_CFG={
+  vocals:{hpf:80,hpfQ:1.2,bellGain:0,panWidth:0,shelfGain:1.5},
+  drums:{hpf:20,hpfQ:0.707,bellGain:0,panWidth:0,shelfGain:1.5},
+  bass:{hpf:20,hpfQ:0.707,bellGain:0,panWidth:0,shelfGain:0},
+  other:{hpf:90,hpfQ:0.707,bellGain:2.5,panWidth:0.4,shelfGain:1.5},
+};
 function makeSoftClipCurve(n=8192){const c=new Float32Array(n);for(let i=0;i<n;i++)c[i]=Math.tanh((i*2/(n-1))-1);return c;}
 function buildClarityChain(id){
   const hpf=actx.createBiquadFilter();hpf.type='highpass';
@@ -901,8 +907,13 @@ function buildMasterStudioChain(){
   masterHigh=actx.createBiquadFilter();masterHigh.type='highshelf';masterHigh.frequency.value=9000;masterHigh.gain.value=masterHighGain;
   masterComp=actx.createDynamicsCompressor();
   masterOutput=actx.createGain();masterOutput.gain.value=masterVol;
+  tapeSatNode=actx.createWaveShaper();tapeSatNode.curve=makeSatCurve(0);tapeSatNode.oversample='4x';
+  loFiHPF=actx.createBiquadFilter();loFiHPF.type='highpass';loFiHPF.frequency.value=20;loFiHPF.Q.value=0.707;
+  loFiLPF=actx.createBiquadFilter();loFiLPF.type='lowpass';loFiLPF.frequency.value=20000;loFiLPF.Q.value=0.707;
+  loFiBitcrush=actx.createWaveShaper();loFiBitcrush.curve=makeIdentityCurve(256);
   masterAnalyser=actx.createAnalyser();masterAnalyser.fftSize=256;masterAnalyser.smoothingTimeConstant=0.75;
-  masterGain.connect(masterLow);masterLow.connect(masterHigh);masterHigh.connect(masterComp);masterComp.connect(masterOutput);masterOutput.connect(masterAnalyser);
+  masterGain.connect(masterLow);masterLow.connect(masterHigh);masterHigh.connect(masterComp);masterComp.connect(masterOutput);
+  masterOutput.connect(tapeSatNode);tapeSatNode.connect(loFiHPF);loFiHPF.connect(loFiLPF);loFiLPF.connect(loFiBitcrush);loFiBitcrush.connect(masterAnalyser);
   if(isIOS){mediaStreamDest=actx.createMediaStreamDestination();masterAnalyser.connect(mediaStreamDest);}
   else{masterAnalyser.connect(actx.destination);}
   reverbSend=actx.createGain();reverbSend.gain.value=0;
@@ -1391,17 +1402,6 @@ function initCtx(){
   masterOutput.connect(lissSplitter);
   lissSplitter.connect(lissLAnalyser,0);lissSplitter.connect(lissRAnalyser,1);
   setMagicClarity(clarityActive);patchIOSOutput();
-  // Tape sat (identity chain initially)
-  tapeSatNode=actx.createWaveShaper();tapeSatNode.curve=makeSatCurve(0);tapeSatNode.oversample='4x';
-  // Width nodes (bypass initially — just pass-through gain)
-  widthSplitter=actx.createChannelSplitter(2);
-  widthMerger=actx.createChannelMerger(2);
-  widthMid=actx.createGain();widthSide=actx.createGain();
-  // Lo-fi nodes
-  loFiHPF=actx.createBiquadFilter();loFiHPF.type='highpass';loFiHPF.frequency.value=300;
-  loFiLPF=actx.createBiquadFilter();loFiLPF.type='lowpass';loFiLPF.frequency.value=3500;
-  loFiBitcrush=actx.createWaveShaper();loFiBitcrush.curve=makeBitcrushCurve();
-  loFiNoiseGain=actx.createGain();loFiNoiseGain.gain.value=0;
 }
 
 function updateMixDuration(){duration=STEMS.reduce((max,s)=>Math.max(max,stemDurations[s.id]||0),0);}
@@ -1439,6 +1439,7 @@ async function loadStem(id,file){
     const lbl=document.getElementById('lbl-'+id);lbl.classList.remove('inactive');lbl.style.color=STEMS.find(s=>s.id===id).acc;
     triggerRainbow(id);updateTimeDisplay();setStatus('');
     if(playing)spawnSrc(id,actx.currentTime-startTime);
+    if(window._pendingMixState){restoreMix(window._pendingMixState);delete window._pendingMixState;}
   }catch(err){if(url&&!stemUrls[id])URL.revokeObjectURL(url);setStatus('Error loading '+id);console.error(err);}
 }
 function spawnSrc(id,offset=0){if(!buffers[id])return;setStemTime(id,offset);if(playing){const p=buffers[id].play();if(p&&p.catch)p.catch(()=>{});}}
@@ -1705,89 +1706,8 @@ function updateTimeDisplay(){if(!playing)document.getElementById('time').textCon
 function fmt(s){const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+(sc<10?'0':'')+sc;}
 function setStatus(msg){document.getElementById('status').textContent=msg;}
 
-// ── Export (wired below after new exportMix redefinition) ─────
+// ── Export ────────────────────────────────────────────────────
 const exportFormatInput=document.getElementById('export-format');
-async function exportMixOld(){
-  if(!hasAnyStem()){alert('No tracks loaded to export.');return;}
-  if(!duration||duration<=0){alert('Duration not ready. Load tracks and let them initialize.');return;}
-  const btn=document.getElementById('export-btn');const orig=btn.textContent;
-  btn.textContent='exporting…';btn.classList.add('active');btn.disabled=true;
-  try{
-    const sr=actx?actx.sampleRate:44100,totalSamples=Math.ceil(duration*sr);
-    const offCtx=new OfflineAudioContext(2,totalSamples,sr);
-
-    // ── Master chain ───────────────────────────────────────────
-    const offMasterIn=offCtx.createGain();offMasterIn.gain.value=1;
-    const offLow=offCtx.createBiquadFilter();offLow.type='lowshelf';offLow.frequency.value=120;offLow.gain.value=masterLowGain;
-    const offHigh=offCtx.createBiquadFilter();offHigh.type='highshelf';offHigh.frequency.value=9000;offHigh.gain.value=masterHighGain;
-    const offComp=offCtx.createDynamicsCompressor();
-    if(masterCompActive){offComp.threshold.value=-18;offComp.ratio.value=2.4;offComp.knee.value=14;offComp.attack.value=0.015;offComp.release.value=0.18;}
-    else{offComp.threshold.value=0;offComp.ratio.value=1;offComp.knee.value=0;offComp.attack.value=0.003;offComp.release.value=0.05;}
-    const offOutput=offCtx.createGain();offOutput.gain.value=masterVol;
-    offMasterIn.connect(offLow);offLow.connect(offHigh);offHigh.connect(offComp);offComp.connect(offOutput);offOutput.connect(offCtx.destination);
-
-    // ── Reverb send ────────────────────────────────────────────
-    if(masterReverb>0){
-      const offRevSend=offCtx.createGain();offRevSend.gain.value=masterReverb*0.65;
-      const offReverb=offCtx.createConvolver();offReverb.buffer=createImpulseResponse(offCtx);
-      const offRevGain=offCtx.createGain();offRevGain.gain.value=1;
-      offHigh.connect(offRevSend);offRevSend.connect(offReverb);offReverb.connect(offRevGain);offRevGain.connect(offOutput);
-    }
-
-    // ── Delay send ─────────────────────────────────────────────
-    if(masterDelay>0){
-      const offDelSend=offCtx.createGain();offDelSend.gain.value=masterDelay*0.5;
-      const offDelay=offCtx.createDelay(1.0);offDelay.delayTime.value=0.28;
-      const offDelFB=offCtx.createGain();offDelFB.gain.value=0.18+masterDelay*0.35;
-      const offDelGain=offCtx.createGain();offDelGain.gain.value=1;
-      offHigh.connect(offDelSend);offDelSend.connect(offDelay);offDelay.connect(offDelFB);offDelFB.connect(offDelay);offDelay.connect(offDelGain);offDelGain.connect(offOutput);
-    }
-
-    // ── Clarity master wet bus ─────────────────────────────────
-    let offClarityWet=null;
-    if(clarityActive){
-      offClarityWet=offCtx.createGain();offClarityWet.gain.value=1;
-      const offCLS=offCtx.createBiquadFilter();offCLS.type='lowshelf';offCLS.frequency.value=200;offCLS.gain.value=-2;
-      const offCLC=offCtx.createDynamicsCompressor();offCLC.threshold.value=-14;offCLC.ratio.value=1.5;offCLC.attack.value=0.025;offCLC.release.value=0.100;offCLC.knee.value=18;
-      const offCLSC=offCtx.createWaveShaper();offCLSC.curve=makeSoftClipCurve();offCLSC.oversample='4x';
-      offClarityWet.connect(offCLS);offCLS.connect(offCLC);offCLC.connect(offCLSC);offCLSC.connect(offMasterIn);
-    }
-
-    // ── Per-stem sources ───────────────────────────────────────
-    await Promise.all(STEMS.map(async s=>{
-      const url=stemUrls[s.id];if(!url)return;
-      try{
-        const resp=await fetch(url);const ab=await resp.arrayBuffer();const audioBuf=await offCtx.decodeAudioData(ab);
-        const src=offCtx.createBufferSource();src.buffer=audioBuf;
-        const g=offCtx.createGain();g.gain.value=muted[s.id]?0:vols[s.id]/STEPS;
-        const eqL=offCtx.createBiquadFilter();eqL.type='lowshelf';eqL.frequency.value=120;eqL.gain.value=stemEqVals[s.id].low;
-        const eqM=offCtx.createBiquadFilter();eqM.type='peaking';eqM.frequency.value=1000;eqM.Q.value=1.2;eqM.gain.value=stemEqVals[s.id].mid;
-        const eqH=offCtx.createBiquadFilter();eqH.type='highshelf';eqH.frequency.value=8000;eqH.gain.value=stemEqVals[s.id].high;
-        const pan=offCtx.createStereoPanner();pan.pan.value=panVals[s.id]??0;
-        src.connect(g);g.connect(eqL);eqL.connect(eqM);eqM.connect(eqH);eqH.connect(pan);
-        if(clarityActive&&offClarityWet){
-          const cfg=EXPORT_CLARITY_CFG[s.id]||EXPORT_CLARITY_CFG.other;
-          const chpf=offCtx.createBiquadFilter();chpf.type='highpass';chpf.frequency.value=cfg.hpf;chpf.Q.value=cfg.hpfQ;
-          const clpf=offCtx.createBiquadFilter();clpf.type='lowpass';clpf.frequency.value=20000;clpf.Q.value=0.707;
-          const cBell=offCtx.createBiquadFilter();cBell.type='peaking';cBell.frequency.value=3200;cBell.Q.value=1.4;cBell.gain.value=cfg.bellGain;
-          const cWL=offCtx.createGain(),cWR=offCtx.createGain();cWL.gain.value=0.5;cWR.gain.value=0.5;
-          const cPL=offCtx.createStereoPanner(),cPR=offCtx.createStereoPanner();cPL.pan.value=-cfg.panWidth;cPR.pan.value=cfg.panWidth;
-          const cShelf=offCtx.createBiquadFilter();cShelf.type='highshelf';cShelf.frequency.value=10000;cShelf.gain.value=cfg.shelfGain;
-          const cPan=offCtx.createStereoPanner();cPan.pan.value=0;
-          pan.connect(chpf);chpf.connect(clpf);clpf.connect(cBell);cBell.connect(cWL);cBell.connect(cWR);cWL.connect(cPL);cWR.connect(cPR);cPL.connect(cShelf);cPR.connect(cShelf);cShelf.connect(cPan);cPan.connect(offClarityWet);
-        }else{
-          pan.connect(offMasterIn);
-        }
-        src.start(0);
-      }catch(e){console.warn('Stem export skip:',s.id,e);}
-    }));
-    const rendered=await offCtx.startRendering();
-    const format=exportFormatInput?.value==='m4a'?'m4a':'wav';
-    if(format==='m4a'){const m4aBlob=await audioBufferToM4a(rendered);triggerBlobDownload(m4aBlob,'stem_mix.m4a');}
-    else{triggerBlobDownload(audioBufferToWav(rendered),'stem_mix.wav');}
-  }catch(err){console.error('Export error:',err);alert('Export failed: '+err.message);}
-  finally{btn.textContent=orig;btn.classList.remove('active');btn.disabled=false;}
-}
 function audioBufferToWav(audioBuffer){
   const numOfChan=audioBuffer.numberOfChannels,sr=audioBuffer.sampleRate;
   let result;if(numOfChan===2)result=interleaveChannels(audioBuffer.getChannelData(0),audioBuffer.getChannelData(1));else result=audioBuffer.getChannelData(0);
@@ -1997,21 +1917,37 @@ async function toggleCue(id){
   if(cueStem===id){
     // Stop cue
     if(cueSrc)try{cueSrc.disconnect();}catch(e){}
+    if(cueTap)try{analyserNodes[cueStem]?.disconnect(cueTap);}catch(e){}
     if(cueCtx)try{await cueCtx.close();}catch(e){}
-    cueStem=null;cueCtx=null;cueSrc=null;cueGain=null;
+    cueStem=null;cueCtx=null;cueSrc=null;cueGain=null;cueTap=null;
     btn?.classList.remove('active');return;
   }
   // Stop previous cue
-  if(cueStem){document.getElementById('scue-'+cueStem)?.classList.remove('active');}
-  if(!buffers[id]){setStatus('Load '+id+' first');setTimeout(()=>setStatus(''),1500);return;}
+  if(cueStem){
+    const prevBtn=document.getElementById('scue-'+cueStem);
+    if(cueSrc)try{cueSrc.disconnect();}catch(e){}
+    if(cueTap)try{analyserNodes[cueStem]?.disconnect(cueTap);}catch(e){}
+    if(cueCtx)try{await cueCtx.close();}catch(e){}
+    prevBtn?.classList.remove('active');
+    cueStem=null;cueCtx=null;cueSrc=null;cueGain=null;cueTap=null;
+  }
+  if(!actx||!analyserNodes[id]){setStatus('Load '+id+' first');setTimeout(()=>setStatus(''),1500);return;}
   const sinkId=document.getElementById('cue-output-select')?.value||'';
   try{
     cueCtx=new(window.AudioContext||window.webkitAudioContext)();
     if(sinkId&&typeof cueCtx.setSinkId==='function'){await cueCtx.setSinkId(sinkId);}
     else if(sinkId){setStatus('setSinkId unsupported');setTimeout(()=>setStatus(''),1500);}
+    // Tap the stem's analyser output into the cue context
+    cueTap=actx.createMediaStreamDestination();
+    analyserNodes[id].connect(cueTap);
+    cueSrc=cueCtx.createMediaStreamSource(cueTap.stream);
+    cueGain=cueCtx.createGain();cueSrc.connect(cueGain);cueGain.connect(cueCtx.destination);
     cueStem=id;btn?.classList.add('active');
     setStatus('Cuing '+id);setTimeout(()=>setStatus(''),1500);
-  }catch(e){setStatus('Cue error: '+e.message);setTimeout(()=>setStatus(''),2000);cueCtx=null;cueStem=null;}
+  }catch(e){setStatus('Cue error: '+e.message);setTimeout(()=>setStatus(''),2000);
+    if(cueCtx)try{await cueCtx.close();}catch(_){}
+    cueCtx=null;cueStem=null;cueTap=null;
+  }
 }
 
 // Feature 12: Tape saturation
@@ -2038,6 +1974,9 @@ async function toggleCue(id){
 (()=>{
   document.getElementById('lofi-btn')?.addEventListener('click',()=>{
     loFiActive=!loFiActive;document.getElementById('lofi-btn').classList.toggle('active',loFiActive);
+    if(loFiHPF){loFiHPF.frequency.value=loFiActive?300:20;}
+    if(loFiLPF){loFiLPF.frequency.value=loFiActive?4000:20000;}
+    if(loFiBitcrush){loFiBitcrush.curve=loFiActive?makeBitcrushCurve(32):makeIdentityCurve(256);}
     setStatus(loFiActive?'lo-fi on':'lo-fi off');setTimeout(()=>setStatus(''),1200);
   });
 })();
@@ -2057,11 +1996,9 @@ async function toggleCue(id){
           const hp=actx.createPanner();hp.panningModel='HRTF';hp.distanceModel='inverse';hp.refDistance=1;hp.maxDistance=10;
           const angle=spatialAngles[s.id]||0;
           hp.positionX.value=Math.sin(angle)*3;hp.positionY.value=0;hp.positionZ.value=-Math.cos(angle)*3;
-          pannerNodes[s.id].disconnect();
-          analyserNodes[s.id].disconnect();
-          // Reconnect: eqHigh → hrtfPanner → analyser
-          stemEqNodes[s.id]?.high.disconnect();
-          stemEqNodes[s.id]?.high.connect(hp);hp.connect(analyserNodes[s.id]);
+          stemEqNodes[s.id].high.disconnect(pannerNodes[s.id]);
+          stemEqNodes[s.id].high.connect(hp);
+          hp.connect(pannerNodes[s.id]);
           hrtfPanners[s.id]=hp;
         }catch(e){console.warn('HRTF error',s.id,e);}
       });
@@ -2069,8 +2006,8 @@ async function toggleCue(id){
       STEMS.forEach(s=>{
         if(!hrtfPanners[s.id])return;
         try{
-          stemEqNodes[s.id]?.high.disconnect();
-          stemEqNodes[s.id]?.high.connect(pannerNodes[s.id]);
+          stemEqNodes[s.id].high.disconnect(hrtfPanners[s.id]);
+          stemEqNodes[s.id].high.connect(pannerNodes[s.id]);
           hrtfPanners[s.id].disconnect();delete hrtfPanners[s.id];
         }catch(e){}
       });
@@ -2229,7 +2166,7 @@ function onMidiMsg(msg){
   document.getElementById('midi-btn')?.addEventListener('click',()=>{
     initMidi();midiLearnMode=!midiLearnMode;
     document.getElementById('midi-btn')?.classList.toggle('active',midiLearnMode);
-    setStatus(midiLearnMode?'Click a fader to map MIDI':'');
+    setStatus(midiLearnMode?'Right-click a fader to map MIDI':'');
     if(!midiLearnMode)setTimeout(()=>setStatus(''),100);
   });
   // Attach MIDI learn to fader segs
@@ -2306,7 +2243,7 @@ function normalizeLUFS(audioBuffer,targetLUFS=-14){
   const measuredLUFS=-0.691+10*Math.log10(rms*rms+1e-30)-10;
   const makeupDb=targetLUFS-measuredLUFS;
   const makeupLin=Math.pow(10,makeupDb/20);
-  const maxSample=Math.max(...Array.from(L).map(Math.abs),...Array.from(R).map(Math.abs));
+  let maxSample=0;for(let i=0;i<len;i++){const a=Math.abs(L[i]),b=Math.abs(R[i]);if(a>maxSample)maxSample=a;if(b>maxSample)maxSample=b;}
   const safeGain=Math.min(makeupLin,0.98/Math.max(maxSample,1e-9));
   const out=actx.createBuffer(audioBuffer.numberOfChannels,len,audioBuffer.sampleRate);
   out.getChannelData(0).set(L.map(v=>v*safeGain));
@@ -2328,7 +2265,6 @@ function normalizeLUFS(audioBuffer,targetLUFS=-14){
 })();
 
 // Hook export button to check stems-out checkbox
-document.getElementById('export-btn').removeEventListener('click',exportMix);
 document.getElementById('export-btn').addEventListener('click',()=>{
   if(document.getElementById('export-stems-out')?.checked){exportStemsOut();}
   else{
@@ -2337,8 +2273,6 @@ document.getElementById('export-btn').addEventListener('click',()=>{
   }
 });
 
-// Update exportMix signature to accept normalize flag
-const _origExportMix=exportMix;
 async function exportMix(normalizeFlag){
   if(!hasAnyStem()){alert('No tracks loaded to export.');return;}
   if(!duration||duration<=0){alert('Duration not ready. Load tracks and let them initialize.');return;}
@@ -2393,11 +2327,6 @@ async function exportMix(normalizeFlag){
   finally{btn.textContent=orig;btn.classList.remove('active');btn.disabled=false;}
 }
 
-// Update the animate loop to call new functions
-const _origAnimate=animate;
-
-// Update EqBars to also check clipping and update spectrogram
-const _origUpdateEqBars=updateEqBars;
 function updateEqBars(){
   STEMS.forEach(s=>{
     const an=analyserNodes[s.id];if(!an)return;
