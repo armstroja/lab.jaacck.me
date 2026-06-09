@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lens</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#0a0a09;
+  --text:#e8e8e0;
+  --muted:#a0a098;
+  --hint:#484840;
+  --accent:#8040ff;
+  --card:rgba(255,255,255,0.05);
+  --card-border:rgba(255,255,255,0.08);
+  --sw:272px;
+}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+  overflow:hidden;
+  height:100vh;
+  user-select:none;
+  -webkit-user-select:none;
+}
+
+/* ── START SCREEN ──────────────────────────────────────── */
+#start{
+  position:fixed;inset:0;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:36px;
+  background:var(--bg);
+  z-index:200;
+  transition:opacity 0.6s ease;
+}
+#start.out{opacity:0;pointer-events:none;}
+#wordmark{
+  font-size:10px;
+  letter-spacing:.65em;
+  text-transform:uppercase;
+  color:var(--muted);
+}
+#start-btn{
+  padding:14px 42px;
+  background:transparent;
+  border:1px solid rgba(255,255,255,0.13);
+  border-radius:30px;
+  color:var(--text);
+  font-family:inherit;
+  font-size:8.5px;
+  letter-spacing:.38em;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all 0.22s ease;
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+}
+#start-btn:hover{
+  background:var(--accent);
+  border-color:var(--accent);
+  box-shadow:0 4px 22px rgba(128,64,255,0.32);
+  transform:translateY(-2px);
+}
+#start-btn:active{transform:translateY(0);}
+#err-msg{
+  font-size:7.5px;
+  letter-spacing:.15em;
+  color:#e05050;
+  text-align:center;
+  max-width:260px;
+  line-height:1.8;
+  display:none;
+}
+
+/* ── APP ───────────────────────────────────────────────── */
+#app{
+  position:fixed;inset:0;
+  display:none;
+}
+#app.on{display:block;}
+
+/* ── CANVAS ────────────────────────────────────────────── */
+#cv{
+  position:fixed;inset:0;
+  width:100%;height:100%;
+  display:block;
+}
+
+/* ── SIDEBAR ───────────────────────────────────────────── */
+#sb{
+  position:fixed;left:0;top:0;bottom:0;
+  width:var(--sw);
+  background:rgba(14,14,12,0.72);
+  backdrop-filter:blur(32px) saturate(170%);
+  -webkit-backdrop-filter:blur(32px) saturate(170%);
+  border-right:1px solid var(--card-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.09),
+    inset 1px 0 0 rgba(255,255,255,0.03),
+    6px 0 36px rgba(0,0,0,0.55);
+  display:flex;flex-direction:column;
+  z-index:10;
+  transition:transform 0.42s cubic-bezier(0.4,0,0.2,1);
+}
+#sb.closed{transform:translateX(var(--sw)); /* slide right = off left */}
+/* Actually retract = slide left off screen */
+#sb.retracted{transform:translateX(calc(-1 * var(--sw)));}
+
+/* Pull tab */
+#tab{
+  position:absolute;
+  right:-26px;top:50%;
+  transform:translateY(-50%);
+  width:26px;height:60px;
+  background:rgba(14,14,12,0.72);
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--card-border);
+  border-left:none;
+  border-radius:0 7px 7px 0;
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    3px 0 12px rgba(0,0,0,0.35);
+  transition:background 0.18s;
+}
+#tab:hover{background:rgba(255,255,255,0.08);}
+.chev{
+  width:5px;height:5px;
+  border-right:1.3px solid var(--muted);
+  border-top:1.3px solid var(--muted);
+  transform:rotate(225deg);
+  transition:transform 0.35s cubic-bezier(0.4,0,0.2,1), border-color 0.18s;
+}
+#sb.retracted .chev{transform:rotate(45deg);}
+#tab:hover .chev{border-color:var(--text);}
+
+/* Sidebar header */
+.sb-head{
+  padding:18px 18px 14px;
+  border-bottom:1px solid var(--card-border);
+  flex-shrink:0;
+}
+.sb-brand{
+  font-size:7.5px;
+  letter-spacing:.52em;
+  text-transform:uppercase;
+  color:var(--hint);
+}
+.sb-status{
+  margin-top:7px;
+  display:flex;align-items:center;gap:7px;
+  font-size:7px;
+  letter-spacing:.2em;
+  text-transform:uppercase;
+  color:var(--hint);
+}
+.dot{
+  width:5px;height:5px;border-radius:50%;
+  background:var(--hint);flex-shrink:0;
+  transition:background 0.3s, box-shadow 0.3s;
+}
+.dot.live{background:var(--accent);box-shadow:0 0 7px rgba(128,64,255,0.65);}
+
+/* Sidebar body */
+.sb-body{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  padding:10px 0;
+}
+.sb-body::-webkit-scrollbar{width:2px;}
+.sb-body::-webkit-scrollbar-thumb{background:var(--hint);border-radius:2px;}
+
+/* Effect strip */
+.strip{
+  margin:6px 10px;
+  padding:12px 13px 10px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:10px;
+  transition:border-color 0.2s;
+}
+.strip.active{border-color:rgba(128,64,255,0.22);}
+.strip-top{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:11px;
+}
+.strip-name{
+  font-size:7px;
+  letter-spacing:.3em;
+  text-transform:uppercase;
+  color:var(--muted);
+}
+.tog{
+  padding:4px 10px;
+  background:transparent;
+  border:1px solid rgba(255,255,255,0.09);
+  border-radius:20px;
+  color:var(--hint);
+  font-family:inherit;
+  font-size:6.5px;
+  letter-spacing:.26em;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all 0.18s;
+}
+.tog:hover{border-color:rgba(255,255,255,0.18);color:var(--muted);}
+.tog.on{
+  background:rgba(128,64,255,0.14);
+  border-color:rgba(128,64,255,0.42);
+  color:var(--accent);
+  box-shadow:0 0 10px rgba(128,64,255,0.14);
+}
+
+/* Slider row */
+.sl-row{
+  display:flex;align-items:center;gap:9px;
+  margin-bottom:8px;
+}
+.sl-lbl{
+  font-size:6.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--hint);width:34px;flex-shrink:0;
+}
+.sl{
+  flex:1;
+  -webkit-appearance:none;appearance:none;
+  height:2px;
+  background:linear-gradient(to right, var(--accent) 0%, var(--accent) var(--p,50%), rgba(255,255,255,0.1) var(--p,50%), rgba(255,255,255,0.1) 100%);
+  border-radius:2px;outline:none;cursor:pointer;
+}
+.sl::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:11px;height:11px;border-radius:50%;
+  background:var(--text);
+  border:2px solid #0a0a09;
+  box-shadow:0 0 4px rgba(0,0,0,0.5);
+  transition:background 0.18s,transform 0.14s;
+  cursor:pointer;
+}
+.sl::-webkit-slider-thumb:hover{background:var(--accent);transform:scale(1.25);}
+.sl-val{
+  font-size:7px;letter-spacing:.1em;
+  color:var(--hint);width:22px;text-align:right;flex-shrink:0;
+}
+
+/* Link row */
+.lk-row{display:flex;align-items:center;gap:8px;}
+.lk-lbl{
+  font-size:6.5px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--hint);flex-shrink:0;
+}
+.lk{
+  padding:3px 9px;
+  background:transparent;
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:14px;
+  color:var(--hint);
+  font-family:inherit;
+  font-size:6.5px;letter-spacing:.18em;text-transform:uppercase;
+  cursor:pointer;
+  transition:all 0.18s;
+}
+.lk:hover{border-color:rgba(255,255,255,0.13);color:var(--muted);}
+.lk.on{
+  border-color:rgba(128,64,255,0.38);
+  color:var(--accent);
+  background:rgba(128,64,255,0.09);
+}
+
+/* Live bar */
+.lb{
+  height:1px;background:rgba(255,255,255,0.05);
+  border-radius:1px;margin-top:9px;overflow:hidden;
+}
+.lb-fill{
+  height:100%;background:var(--accent);
+  width:0%;border-radius:1px;
+  transition:width 0.05s linear;
+}
+
+/* Sidebar footer */
+.sb-foot{
+  padding:12px 18px;
+  border-top:1px solid var(--card-border);
+  flex-shrink:0;
+}
+.sb-foot a{
+  font-size:7px;letter-spacing:.2em;text-transform:lowercase;
+  color:var(--hint);text-decoration:none;
+  transition:color 0.18s;
+}
+.sb-foot a:hover{color:var(--muted);}
+
+/* Hidden video source */
+#vid{display:none;}
+</style>
+</head>
+<body>
+
+<!-- ── START SCREEN ── -->
+<div id="start">
+  <div id="wordmark">Lens</div>
+  <button id="start-btn">Start</button>
+  <div id="err-msg"></div>
+</div>
+
+<!-- ── APP ── -->
+<div id="app">
+  <canvas id="cv"></canvas>
+
+  <div id="sb">
+    <button id="tab" aria-label="Toggle sidebar"><span class="chev"></span></button>
+
+    <div class="sb-head">
+      <div class="sb-brand">Lens</div>
+      <div class="sb-status">
+        <span class="dot" id="dot"></span>
+        <span id="stat">loading</span>
+      </div>
+    </div>
+
+    <div class="sb-body">
+
+      <div class="strip" id="s-warp">
+        <div class="strip-top">
+          <span class="strip-name">Mesh Warp</span>
+          <button class="tog" data-k="warp">off</button>
+        </div>
+        <div class="sl-row">
+          <span class="sl-lbl">Depth</span>
+          <input type="range" class="sl" data-k="warp" min="0" max="100" value="50" style="--p:50%">
+          <span class="sl-val" data-kv="warp">50</span>
+        </div>
+        <div class="lk-row">
+          <span class="lk-lbl">Link</span>
+          <button class="lk" data-k="warp">off</button>
+        </div>
+        <div class="lb"><div class="lb-fill" data-kb="warp"></div></div>
+      </div>
+
+      <div class="strip" id="s-chroma">
+        <div class="strip-top">
+          <span class="strip-name">Chromatic Ab.</span>
+          <button class="tog" data-k="chroma">off</button>
+        </div>
+        <div class="sl-row">
+          <span class="sl-lbl">Spread</span>
+          <input type="range" class="sl" data-k="chroma" min="0" max="100" value="50" style="--p:50%">
+          <span class="sl-val" data-kv="chroma">50</span>
+        </div>
+        <div class="lk-row">
+          <span class="lk-lbl">Link</span>
+          <button class="lk" data-k="chroma">off</button>
+        </div>
+        <div class="lb"><div class="lb-fill" data-kb="chroma"></div></div>
+      </div>
+
+      <div class="strip" id="s-hue">
+        <div class="strip-top">
+          <span class="strip-name">Hue Grade</span>
+          <button class="tog" data-k="hue">off</button>
+        </div>
+        <div class="sl-row">
+          <span class="sl-lbl">Shift</span>
+          <input type="range" class="sl" data-k="hue" min="0" max="100" value="50" style="--p:50%">
+          <span class="sl-val" data-kv="hue">50</span>
+        </div>
+        <div class="lk-row">
+          <span class="lk-lbl">Link</span>
+          <button class="lk" data-k="hue">off</button>
+        </div>
+        <div class="lb"><div class="lb-fill" data-kb="hue"></div></div>
+      </div>
+
+    </div>
+
+    <div class="sb-foot">
+      <a href="https://lab.jaacck.me" target="_blank">lab.jaacck.me</a>
+    </div>
+  </div>
+</div>
+
+<video id="vid" playsinline muted></video>
+
+<!-- MediaPipe CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+'use strict';
+
+// ── CONSTANTS ──────────────────────────────────────────────────────────────
+// 15 key face mesh landmark indices spread across face
+const KLM = [1,33,263,61,291,199,10,234,454,4,152,168,107,336,13];
+const NLM = KLM.length;
+const LINKS = ['off','r hand','l hand','face','speed'];
+
+// ── STATE ──────────────────────────────────────────────────────────────────
+const fx = {
+  warp:  {on:false, v:0.5, link:0},
+  chroma:{on:false, v:0.5, link:0},
+  hue:   {on:false, v:0.5, link:0},
+};
+
+const tr = {
+  rhy: null,   // right hand Y (0=bottom 1=top), null=not detected
+  lhy: null,
+  fs:  null,   // face scale
+  spd: 0,      // motion speed
+  lm:  Array.from({length:NLM}, ()=>({x:0.5,y:0.5})),
+  prevLm: null,
+  hasFace: false,
+};
+
+// ── GLSL ───────────────────────────────────────────────────────────────────
+const VERT = `
+attribute vec2 a_p;
+varying vec2 v_uv;
+void main(){
+  /* mirror x for selfie view, flip y for WebGL texture origin */
+  v_uv = vec2(0.5 - a_p.x*0.5, a_p.y*0.5 + 0.5);
+  gl_Position = vec4(a_p, 0.0, 1.0);
+}`;
+
+const FRAG = `
+precision mediump float;
+uniform sampler2D u_t;
+varying vec2 v_uv;
+
+uniform float u_wOn; uniform float u_wA;
+uniform float u_cOn; uniform float u_cA;
+uniform float u_hOn; uniform float u_hA;
+uniform float u_hf;
+uniform vec2 u_lm[${NLM}];
+
+vec3 hrot(vec3 c, float a){
+  vec3 ax = vec3(0.57735);
+  float cs = cos(a), sn = sin(a);
+  return c*cs + cross(ax,c)*sn + ax*dot(ax,c)*(1.0-cs);
+}
+
+void main(){
+  vec2 uv = v_uv;
+
+  /* Mesh warp */
+  if(u_wOn > 0.5 && u_hf > 0.5){
+    vec2 d = vec2(0.0);
+    for(int i=0;i<${NLM};i++){
+      vec2 r = uv - u_lm[i];
+      float r2 = dot(r,r);
+      float s = u_wA * 0.06 * exp(-r2 * 48.0);
+      float dir = mod(float(i),2.0) < 1.0 ? 1.0 : -0.7;
+      d += normalize(r + vec2(0.0001)) * s * dir;
+    }
+    uv = clamp(uv + d, 0.001, 0.999);
+  }
+
+  /* Chromatic aberration */
+  vec4 col;
+  if(u_cOn > 0.5){
+    float off = u_cA * 0.026;
+    float rv = texture2D(u_t, vec2(uv.x+off, uv.y)).r;
+    float gv = texture2D(u_t, uv).g;
+    float bv = texture2D(u_t, vec2(uv.x-off, uv.y)).b;
+    col = vec4(rv, gv, bv, 1.0);
+  } else {
+    col = texture2D(u_t, uv);
+  }
+
+  /* Hue grade */
+  if(u_hOn > 0.5){
+    col.rgb = clamp(hrot(col.rgb, u_hA * 6.28318), 0.0, 1.0);
+  }
+
+  gl_FragColor = col;
+}`;
+
+// ── WEBGL SETUP ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('cv');
+const gl = canvas.getContext('webgl', {antialias:false, alpha:false});
+
+function mkShader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error('Shader:', gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, mkShader(gl.VERTEX_SHADER,   VERT));
+gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS))
+  console.error('Program:', gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+// Fullscreen quad (triangle strip)
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aP = gl.getAttribLocation(prog, 'a_p');
+gl.enableVertexAttribArray(aP);
+gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+
+// Texture for video frames
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+// Uniform locations
+const U = {
+  t:   gl.getUniformLocation(prog,'u_t'),
+  wOn: gl.getUniformLocation(prog,'u_wOn'),
+  wA:  gl.getUniformLocation(prog,'u_wA'),
+  cOn: gl.getUniformLocation(prog,'u_cOn'),
+  cA:  gl.getUniformLocation(prog,'u_cA'),
+  hOn: gl.getUniformLocation(prog,'u_hOn'),
+  hA:  gl.getUniformLocation(prog,'u_hA'),
+  hf:  gl.getUniformLocation(prog,'u_hf'),
+  lm:  gl.getUniformLocation(prog,'u_lm'),
+};
+
+function resize(){
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── TRACKING HELPERS ───────────────────────────────────────────────────────
+function tval(link){
+  switch(link){
+    case 1: return tr.rhy ?? 0;
+    case 2: return tr.lhy ?? 0;
+    case 3: return tr.fs  ?? 0;
+    case 4: return Math.min(1, tr.spd * 12);
+    default: return 1;
+  }
+}
+
+function effAmt(k){
+  const e = fx[k];
+  return e.link === 0 ? e.v : e.v * tval(e.link);
+}
+
+// ── RENDER LOOP ────────────────────────────────────────────────────────────
+const vid = document.getElementById('vid');
+const lmBuf = new Float32Array(NLM * 2);
+
+function frame(){
+  requestAnimationFrame(frame);
+
+  if(vid.readyState < 2) return;
+
+  // Upload frame
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+
+  // Uniforms
+  gl.uniform1i(U.t, 0);
+  gl.uniform1f(U.wOn, fx.warp.on  ? 1:0);  gl.uniform1f(U.wA,  effAmt('warp'));
+  gl.uniform1f(U.cOn, fx.chroma.on? 1:0);  gl.uniform1f(U.cA,  effAmt('chroma'));
+  gl.uniform1f(U.hOn, fx.hue.on   ? 1:0);  gl.uniform1f(U.hA,  effAmt('hue'));
+  gl.uniform1f(U.hf,  tr.hasFace  ? 1:0);
+
+  // Pack landmarks (mirror x to match mirrored video)
+  for(let i=0;i<NLM;i++){
+    lmBuf[i*2]   = 1.0 - tr.lm[i].x;
+    lmBuf[i*2+1] = tr.lm[i].y;
+  }
+  gl.uniform2fv(U.lm, lmBuf);
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // Update live bars
+  for(const k of ['warp','chroma','hue']){
+    const bar = document.querySelector(`[data-kb="${k}"]`);
+    if(!bar) continue;
+    const e = fx[k];
+    let pct = 0;
+    if(e.on){
+      pct = e.link > 0 ? tval(e.link) * 100 : e.v * 100;
+    }
+    bar.style.width = pct + '%';
+  }
+}
+
+// ── MEDIAPIPE ──────────────────────────────────────────────────────────────
+let faceReady=false, handsReady=false;
+
+const faceMesh = new FaceMesh({
+  locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+});
+faceMesh.setOptions({
+  maxNumFaces:1, refineLandmarks:false,
+  minDetectionConfidence:0.5, minTrackingConfidence:0.5
+});
+faceMesh.onResults(r=>{
+  if(r.multiFaceLandmarks?.length){
+    const L = r.multiFaceLandmarks[0];
+    tr.hasFace = true;
+
+    KLM.forEach((idx,i)=>{ tr.lm[i]={x:L[idx].x, y:L[idx].y}; });
+
+    // Face scale from bounding box
+    let x0=1,x1=0,y0=1,y1=0;
+    L.forEach(l=>{ x0=Math.min(x0,l.x); x1=Math.max(x1,l.x); y0=Math.min(y0,l.y); y1=Math.max(y1,l.y); });
+    tr.fs = Math.min(1, ((x1-x0)+(y1-y0)) / 0.65);
+
+    // Motion speed
+    if(tr.prevLm){
+      let sum=0;
+      for(let i=0;i<NLM;i++){
+        const dx=tr.lm[i].x-tr.prevLm[i].x, dy=tr.lm[i].y-tr.prevLm[i].y;
+        sum+=Math.sqrt(dx*dx+dy*dy);
+      }
+      tr.spd = sum/NLM;
+    }
+    tr.prevLm = tr.lm.map(l=>({...l}));
+  } else {
+    tr.hasFace = false;
+    tr.fs = null;
+  }
+  if(!faceReady){ faceReady=true; checkReady(); }
+});
+
+const hands = new Hands({
+  locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+});
+hands.setOptions({
+  maxNumHands:2, modelComplexity:0,
+  minDetectionConfidence:0.5, minTrackingConfidence:0.5
+});
+hands.onResults(r=>{
+  tr.rhy = null; tr.lhy = null;
+  if(r.multiHandLandmarks?.length){
+    r.multiHandLandmarks.forEach((hand, i)=>{
+      // sort by raw wrist x: lower x = right side of mirrored display = "right hand"
+      const wx = hand[0].x;
+      const wy = 1 - hand[0].y; // invert: 1=top
+      // determine display side
+      if(wx < 0.5){ tr.rhy = wy; }
+      else         { tr.lhy = wy; }
+    });
+  }
+  if(!handsReady){ handsReady=true; checkReady(); }
+});
+
+function checkReady(){
+  if(faceReady && handsReady){
+    document.getElementById('dot').classList.add('live');
+    document.getElementById('stat').textContent = 'tracking';
+  }
+}
+
+// ── START PIPELINE ─────────────────────────────────────────────────────────
+async function start(){
+  document.getElementById('stat').textContent = 'loading';
+
+  let cam;
+  try {
+    cam = new Camera(vid, {
+      onFrame: async ()=>{
+        await faceMesh.send({image:vid});
+        await hands.send({image:vid});
+      },
+      width: 1280, height: 720
+    });
+    await cam.start();
+  } catch(e){
+    showErr('Camera access denied or unavailable. Please allow camera permissions and reload.');
+    return;
+  }
+
+  requestAnimationFrame(frame);
+}
+
+function showErr(msg){
+  const el = document.getElementById('err-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  document.getElementById('start-btn').textContent = 'Retry';
+  document.getElementById('start-btn').disabled = false;
+}
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+// Start button
+document.getElementById('start-btn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('start-btn');
+  btn.disabled = true;
+  btn.textContent = 'starting...';
+
+  const startEl = document.getElementById('start');
+  const appEl   = document.getElementById('app');
+
+  startEl.classList.add('out');
+  setTimeout(()=>{ startEl.style.display='none'; }, 600);
+  appEl.classList.add('on');
+
+  await start();
+});
+
+// Sidebar toggle
+document.getElementById('tab').addEventListener('click',()=>{
+  document.getElementById('sb').classList.toggle('retracted');
+});
+
+// On/off toggles
+document.querySelectorAll('.tog').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const k=b.dataset.k;
+    fx[k].on = !fx[k].on;
+    b.textContent = fx[k].on ? 'on' : 'off';
+    b.classList.toggle('on', fx[k].on);
+    document.getElementById(`s-${k}`).classList.toggle('active', fx[k].on);
+  });
+});
+
+// Sliders
+document.querySelectorAll('.sl').forEach(sl=>{
+  const update = ()=>{
+    const k=sl.dataset.k, pct=sl.value+'%';
+    fx[k].v = sl.value/100;
+    sl.style.setProperty('--p', pct);
+    document.querySelector(`[data-kv="${k}"]`).textContent = sl.value;
+  };
+  sl.addEventListener('input', update);
+  update();
+});
+
+// Link buttons
+document.querySelectorAll('.lk').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const k=b.dataset.k;
+    fx[k].link = (fx[k].link+1) % LINKS.length;
+    b.textContent = LINKS[fx[k].link];
+    b.classList.toggle('on', fx[k].link>0);
+  });
+});
+</script>
+</body>
+</html>
