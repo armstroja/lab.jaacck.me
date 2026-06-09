@@ -352,7 +352,48 @@ body.dark-mode #lissajous-canvas{background:rgba(0,0,0,0.4);}
 .waveform-canvas.scrub-enabled{pointer-events:auto;cursor:ew-resize;}
 .waveform-canvas{opacity:0.75;}
 .waveform-canvas.playing{opacity:0.15;}
+
+/* ── 3D Audio Studio Overlay ──────────────────────────────── */
+#studio-3d-overlay{
+  position:fixed;inset:0;z-index:2000;
+  display:none;flex-direction:column;
+  background:#07070a;
+}
+#studio-3d-bar{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 18px;flex-shrink:0;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+  background:rgba(10,10,14,0.92);backdrop-filter:blur(16px);
+}
+#studio-3d-title{font-size:8px;letter-spacing:.32em;text-transform:uppercase;color:#666;}
+#studio-3d-warn{
+  display:flex;align-items:center;gap:6px;
+  font-size:7.5px;letter-spacing:.18em;text-transform:lowercase;
+  color:#8040ff;background:rgba(128,64,255,0.12);
+  border:1px solid rgba(128,64,255,0.3);border-radius:10px;
+  padding:4px 10px;
+}
+#studio-3d-warn::before{content:'○';font-size:9px;}
+#studio-3d-hint{
+  font-size:7px;letter-spacing:.14em;color:#444;
+  text-transform:lowercase;
+}
+#studio-3d-close{
+  margin-left:auto;font-size:7px;letter-spacing:.22em;text-transform:lowercase;
+  color:#666;background:none;border:1px solid rgba(255,255,255,0.1);
+  border-radius:8px;cursor:pointer;padding:5px 10px;
+  transition:color .2s,border-color .2s;
+}
+#studio-3d-close:hover{color:#e0e0d8;border-color:rgba(255,255,255,0.25);}
+#studio-3d-canvas{display:block;flex:1;width:100%;touch-action:none;}
+.studio-3d-label{
+  position:absolute;pointer-events:none;
+  font-size:7px;letter-spacing:.18em;text-transform:uppercase;
+  color:rgba(255,255,255,0.55);
+  transform:translateX(-50%);white-space:nowrap;
+}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 <svg style="position:absolute;width:0;height:0;"><defs><filter id="goo" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/><feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 28 -10" result="goo"/></filter></defs></svg>
@@ -1246,7 +1287,7 @@ STEMS.forEach(s=>{
   spatialDot.addEventListener('touchstart',e=>{if(orbitActive)return;e.preventDefault();throwStates[s.id].active=false;spatialDragHistory=[];panTouchTap={id:s.id,startX:e.touches[0].clientX,startY:e.touches[0].clientY,moved:false};beginPanDrag(s.id,'spatial');e.stopPropagation();},{passive:false});
   spatialDot.addEventListener('touchend',e=>{if(activePanId===s.id&&activePanSurface==='spatial')initThrowFromHistory(s.id);activePanId=null;activePanSurface='river';panTouchTap={id:null,startX:0,startY:0,moved:false};e.stopPropagation();},{passive:true});
 });
-spatialView.addEventListener('dblclick',e=>{e.preventDefault();setSpatialViewActive(false);});
+spatialView.addEventListener('dblclick',e=>{e.preventDefault();if(window._open3DStudio)window._open3DStudio();else setSpatialViewActive(false);});
 spatialView.addEventListener('touchend',e=>{if(!spatialViewActive||activePanId)return;const now=performance.now();if(now-lastSpatialTap<320){e.preventDefault();setSpatialViewActive(false);return;}lastSpatialTap=now;},{passive:false});
 
 const onPanMove=(clientX,clientY)=>{
@@ -2554,6 +2595,278 @@ function _drawWaveformPlayhead(id,pct){
 }
 
 animate();
+
+// ── 3D Audio Studio ────────────────────────────────────────────
+(function(){
+  let active=false,prevHrtf=false;
+  let renderer=null,scene=null,camera=null,animId=null;
+  const meshes={},positions={};
+  let dragging=null; // {id,mode,startClientY,startPosY}
+  let shiftDown=false;
+  let raycaster=null,mouse=null,planeTarget=null,xzPlane=null;
+  let labelEls={};
+
+  const overlay=document.createElement('div');overlay.id='studio-3d-overlay';
+  overlay.innerHTML=`<div id="studio-3d-bar">
+    <span id="studio-3d-title">3d audio studio</span>
+    <span id="studio-3d-warn">best with headphones</span>
+    <span id="studio-3d-hint">drag to pan · shift+drag for elevation</span>
+    <button id="studio-3d-close">esc / close</button>
+  </div>
+  <canvas id="studio-3d-canvas"></canvas>`;
+  document.body.appendChild(overlay);
+
+  document.getElementById('studio-3d-close').addEventListener('click',close3D);
+  window.addEventListener('keydown',e=>{
+    if(e.key==='Shift')shiftDown=true;
+    if(e.key==='Escape'&&active){e.preventDefault();close3D();}
+  });
+  window.addEventListener('keyup',e=>{if(e.key==='Shift')shiftDown=false;});
+
+  function open3D(){
+    if(active||!window.THREE)return;
+    active=true;
+    if(!raycaster){raycaster=new THREE.Raycaster();mouse=new THREE.Vector2();planeTarget=new THREE.Vector3();xzPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);}
+    prevHrtf=hrtfMode;
+    // Init positions from current spatial angles
+    STEMS.forEach(s=>{
+      const a=spatialAngles[s.id]||0;
+      positions[s.id]={x:Math.sin(a)*3,y:0,z:-Math.cos(a)*3};
+    });
+    // Force HRTF on
+    if(!hrtfMode){
+      initCtx();
+      document.getElementById('hrtf-btn')?.click();
+    }
+    overlay.style.display='flex';
+    initScene();
+    // Update HRTF positions from saved 3D positions
+    STEMS.forEach(s=>apply3DPos(s.id));
+  }
+
+  function close3D(){
+    if(!active)return;
+    active=false;
+    // Restore HRTF state
+    if(!prevHrtf&&hrtfMode)document.getElementById('hrtf-btn')?.click();
+    // Restore 2D pan from angles
+    STEMS.forEach(s=>{
+      const pos=positions[s.id];if(!pos)return;
+      const a=Math.atan2(pos.x,-pos.z);spatialAngles[s.id]=normAngle(a);
+      const val=applySoftCenter(pos.x/Math.max(1,Math.hypot(pos.x,pos.z))*1);
+      panVals[s.id]=val;setPanDropPos(s.id,val,{syncSpatial:false});
+      if(pannerNodes[s.id]&&actx)pannerNodes[s.id].pan.setTargetAtTime(val,actx.currentTime,0.08);
+    });
+    // Cleanup
+    if(animId){cancelAnimationFrame(animId);animId=null;}
+    if(renderer){renderer.dispose();renderer=null;}
+    scene=null;camera=null;
+    Object.values(labelEls).forEach(el=>el.remove());labelEls={};
+    overlay.style.display='none';
+  }
+
+  function initScene(){
+    const canvas=document.getElementById('studio-3d-canvas');
+    const w=overlay.clientWidth,h=overlay.clientHeight-40;
+
+    renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(w,h);
+    renderer.setClearColor(darkModeActive?0x07070a:0x1a1a1c,1);
+
+    scene=new THREE.Scene();
+    if(darkModeActive){scene.fog=new THREE.FogExp2(0x07070a,0.025);}
+    else{scene.fog=new THREE.FogExp2(0x1a1a1c,0.025);}
+
+    camera=new THREE.PerspectiveCamera(52,w/h,0.1,80);
+    camera.position.set(0,9,11);camera.lookAt(0,0,0);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff,0.3));
+    const dl=new THREE.DirectionalLight(0xffffff,0.6);dl.position.set(4,10,4);scene.add(dl);
+
+    // Floor grid
+    const grid=new THREE.GridHelper(14,14,0x333340,0x1e1e28);
+    grid.material.transparent=true;grid.material.opacity=0.55;scene.add(grid);
+
+    // Listener marker at origin
+    const lGeo=new THREE.SphereGeometry(0.14,10,10);
+    const lMat=new THREE.MeshStandardMaterial({color:0x888888,emissive:0x444444,roughness:0.4});
+    const lMesh=new THREE.Mesh(lGeo,lMat);scene.add(lMesh);
+    // Listener ring
+    const rGeo=new THREE.RingGeometry(0.28,0.32,24);
+    const rMat=new THREE.MeshBasicMaterial({color:0x666666,side:THREE.DoubleSide,transparent:true,opacity:0.4});
+    const ring=new THREE.Mesh(rGeo,rMat);ring.rotation.x=-Math.PI/2;scene.add(ring);
+
+    // Stem spheres
+    Object.values(meshes).forEach(m=>scene.remove(m));
+    STEMS.forEach(s=>{
+      const col=new THREE.Color(s.acc);
+      const geo=new THREE.SphereGeometry(0.28,18,18);
+      const mat=new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.7,roughness:0.2,metalness:0.1});
+      const mesh=new THREE.Mesh(geo,mat);
+      // Glow halo
+      const hGeo=new THREE.SphereGeometry(0.52,12,12);
+      const hMat=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.11,side:THREE.BackSide,depthWrite:false});
+      mesh.add(new THREE.Mesh(hGeo,hMat));
+      // Point light
+      const pl=new THREE.PointLight(col,0.9,4);mesh.add(pl);
+      // Vertical stem line to floor
+      const lineMat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:0.25});
+      const lineGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,-0.28,0)]);
+      mesh._line=new THREE.Line(lineGeo,lineMat);scene.add(mesh._line);
+
+      const pos=positions[s.id];
+      mesh.position.set(pos.x,pos.y,pos.z);
+      meshes[s.id]=mesh;
+      if(buffers[s.id])scene.add(mesh);
+
+      // DOM label
+      const lbl=document.createElement('div');lbl.className='studio-3d-label';lbl.textContent=s.label;
+      lbl.style.color=s.acc+'bb';overlay.appendChild(lbl);labelEls[s.id]=lbl;
+    });
+
+    setupDrag(canvas);
+
+    function render(){
+      animId=requestAnimationFrame(render);
+      const t=performance.now()*0.001;
+      STEMS.forEach(s=>{
+        const m=meshes[s.id];if(!m)return;
+        const visible=!!buffers[s.id];
+        if(visible&&!m.parent)scene.add(m);
+        if(!visible&&m.parent)scene.remove(m);
+        if(!visible)return;
+        const en=stemEnergy[s.id]||0;
+        const sc=1+en*0.28+Math.sin(t*2.2+STEMS.indexOf(s)*1.1)*0.018;
+        m.scale.setScalar(sc);
+        m.children[0].material.opacity=0.08+en*0.28;
+        m.children[1].intensity=0.6+en*1.4;
+        // Stem line to floor
+        const pos=positions[s.id];
+        if(m._line){
+          const pts=[new THREE.Vector3(0,0,0),new THREE.Vector3(0,-pos.y,0)];
+          m._line.geometry.setFromPoints(pts);
+          m._line.position.set(pos.x,pos.y,pos.z);
+        }
+        // Project label to screen
+        const lbl=labelEls[s.id];
+        if(lbl){
+          const v=m.position.clone().project(camera);
+          const cx=(v.x*0.5+0.5)*overlay.clientWidth;
+          const cy=(-v.y*0.5+0.5)*(overlay.clientHeight-40)+40;
+          lbl.style.left=cx+'px';lbl.style.top=(cy+18)+'px';
+          lbl.style.display=(v.z<1)?'block':'none';
+        }
+      });
+      renderer.render(scene,camera);
+    }
+    render();
+
+    function onResize(){
+      if(!renderer)return;
+      const nw=overlay.clientWidth,nh=overlay.clientHeight-40;
+      camera.aspect=nw/nh;camera.updateProjectionMatrix();renderer.setSize(nw,nh);
+    }
+    window.addEventListener('resize',onResize);
+    overlay._resizeOff=()=>window.removeEventListener('resize',onResize);
+  }
+
+  function setupDrag(canvas){
+    const tmpPt=new THREE.Vector3();
+    function ndcOf(e){
+      const r=canvas.getBoundingClientRect();
+      return {x:((e.clientX-r.left)/r.width)*2-1,y:-((e.clientY-r.top)/r.height)*2+1};
+    }
+    function hitstem(e){
+      const n=ndcOf(e);mouse.set(n.x,n.y);raycaster.setFromCamera(mouse,camera);
+      const obs=STEMS.filter(s=>meshes[s.id]&&buffers[s.id]).map(s=>meshes[s.id]);
+      const hits=raycaster.intersectObjects(obs,true);
+      if(!hits.length)return null;
+      let obj=hits[0].object;
+      while(obj.parent&&obj.parent!==scene)obj=obj.parent;
+      return STEMS.find(s=>meshes[s.id]===obj)||null;
+    }
+
+    canvas.addEventListener('mousedown',e=>{
+      if(!scene)return;
+      const s=hitstem(e);if(!s)return;
+      const pos=positions[s.id];
+      if(shiftDown||e.shiftKey){
+        dragging={id:s.id,mode:'y',startClientY:e.clientY,startPosY:pos.y};
+      }else{
+        xzPlane.constant=-pos.y;
+        dragging={id:s.id,mode:'xz'};
+      }
+      canvas.style.cursor='grabbing';
+    });
+    canvas.addEventListener('mousemove',e=>{
+      if(!scene)return;
+      if(!dragging){canvas.style.cursor=hitstem(e)?'grab':'default';return;}
+      const {id,mode}=dragging;const pos=positions[id];const mesh=meshes[id];if(!mesh)return;
+      if(mode==='xz'){
+        const n=ndcOf(e);mouse.set(n.x,n.y);raycaster.setFromCamera(mouse,camera);
+        xzPlane.constant=-pos.y;
+        if(raycaster.ray.intersectPlane(xzPlane,tmpPt)){
+          pos.x=Math.max(-5,Math.min(5,tmpPt.x));
+          pos.z=Math.max(-5,Math.min(5,tmpPt.z));
+        }
+      }else{
+        const dy=e.clientY-dragging.startClientY;
+        pos.y=Math.max(-2,Math.min(5,dragging.startPosY-dy*0.025));
+      }
+      mesh.position.set(pos.x,pos.y,pos.z);
+      apply3DPos(id);
+    });
+    window.addEventListener('mouseup',()=>{dragging=null;if(canvas)canvas.style.cursor='default';},{capture:false});
+
+    // Touch support
+    canvas.addEventListener('touchstart',e=>{
+      if(!scene||!e.touches.length)return;
+      e.preventDefault();
+      const t=e.touches[0];
+      const fakeE={clientX:t.clientX,clientY:t.clientY,shiftKey:false};
+      const s=hitstem(fakeE);if(!s)return;
+      const pos=positions[s.id];
+      xzPlane.constant=-pos.y;
+      dragging={id:s.id,mode:'xz'};
+    },{passive:false});
+    canvas.addEventListener('touchmove',e=>{
+      if(!dragging||!e.touches.length)return;
+      e.preventDefault();
+      const t=e.touches[0];
+      const {id}=dragging;const pos=positions[id];const mesh=meshes[id];if(!mesh)return;
+      const n=ndcOf({clientX:t.clientX,clientY:t.clientY});mouse.set(n.x,n.y);raycaster.setFromCamera(mouse,camera);
+      xzPlane.constant=-pos.y;
+      if(raycaster.ray.intersectPlane(xzPlane,tmpPt)){
+        pos.x=Math.max(-5,Math.min(5,tmpPt.x));pos.z=Math.max(-5,Math.min(5,tmpPt.z));
+      }
+      mesh.position.set(pos.x,pos.y,pos.z);apply3DPos(id);
+    },{passive:false});
+    canvas.addEventListener('touchend',()=>{dragging=null;});
+  }
+
+  function apply3DPos(id){
+    const pos=positions[id];
+    // Update HRTF panner
+    const hp=hrtfPanners[id];
+    if(hp&&actx){
+      const now=actx.currentTime;
+      hp.positionX.setTargetAtTime(pos.x,now,0.02);
+      hp.positionY.setTargetAtTime(pos.y,now,0.02);
+      hp.positionZ.setTargetAtTime(pos.z,now,0.02);
+    }
+    // Sync 2D pan indicator
+    const maxXZ=Math.max(0.01,Math.hypot(pos.x,pos.z));
+    const pan2d=applySoftCenter(Math.max(-1,Math.min(1,pos.x/5)));
+    panVals[id]=pan2d;
+    setPanDropPos(id,pan2d,{syncSpatial:false});
+    if(pannerNodes[id]&&actx)pannerNodes[id].pan.setTargetAtTime(pan2d,actx.currentTime,0.02);
+  }
+
+  // Expose open for external use
+  window._open3DStudio=open3D;
+})();
 </script>
 </body>
 </html>
