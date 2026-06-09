@@ -1182,6 +1182,7 @@ async function loadStem(id, file) {
     triggerRainbow(id); updateTimeDisplay();
     if(dz){ dz.classList.remove('loading'); const h=dz.querySelector('.dz-hint'); if(h)h.textContent='tap / drop'; }
     if(playing) spawnSrc(id, actx.currentTime-startTime);
+    if(window._pendingMixStateMobile){restoreMixMobile(window._pendingMixStateMobile);delete window._pendingMixStateMobile;}
   } catch(err) {
     if(url&&!stemUrls[id])URL.revokeObjectURL(url);
     const dz2=document.getElementById('dz-'+id);
