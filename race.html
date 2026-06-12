@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Maze Race Simulator</title>
+<title>Arena Race Simulator</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -98,7 +98,7 @@
 </style>
 </head>
 <body>
-<h1>Maze Race</h1>
+<h1>Arena Race</h1>
 <div id="status-bar">
   <span id="leader-display">Press Start</span>
   <span id="timer"></span>
@@ -119,11 +119,9 @@
 
 <script>
 const CANVAS_W = 800, CANVAS_H = 800;
-const COLS = 20, ROWS = 20;
-const CELL_W = CANVAS_W / COLS, CELL_H = CANVAS_H / ROWS;
-const WALL = 4;
-const RACER_R = 8;
-const SPEED = 2.2;
+const RACER_R = 18;
+const SPEED = 2.4;
+const WALL_T = 10; // barrier thickness (visual only, collision uses segments)
 
 const RACERS_DEF = [
   { name: 'Red',    color: '#ff4444' },
@@ -142,227 +140,202 @@ const winnerOverlay = document.getElementById('winner-overlay');
 const winnerName = document.getElementById('winner-name');
 const winnerTime = document.getElementById('winner-time');
 
-let maze, finish, racers, state, startTime, raf;
-// state: 'idle' | 'running' | 'done'
+let barriers, finish, racers, state, startTime, raf;
 
-// ── Maze generation (recursive backtracker) ──────────────────────────────────
+// ── Barrier generation ───────────────────────────────────────────────────────
+// 5 barriers, each a horizontal or vertical wall spanning ~60–75% of the arena
+// with a small gap (just wide enough for one racer) at a random position.
 
-function buildMaze() {
-  // cells[r][c] = { top, right, bottom, left } walls as booleans
-  const cells = Array.from({length: ROWS}, () =>
-    Array.from({length: COLS}, () => ({ top: true, right: true, bottom: true, left: true }))
-  );
-  const visited = Array.from({length: ROWS}, () => new Array(COLS).fill(false));
+function buildBarriers() {
+  const W = CANVAS_W, H = CANVAS_H;
+  const margin = 60;          // stay away from edges
+  const GAP = RACER_R * 2.8; // gap width — tight but passable
 
-  function carve(r, c) {
-    visited[r][c] = true;
-    const dirs = shuffle([
-      [0, 1, 'right', 'left'],
-      [0,-1, 'left',  'right'],
-      [1, 0, 'bottom','top'],
-      [-1,0, 'top',   'bottom'],
-    ]);
-    for (const [dr, dc, wa, wb] of dirs) {
-      const nr = r + dr, nc = c + dc;
-      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
-      if (visited[nr][nc]) continue;
-      cells[r][c][wa] = false;
-      cells[nr][nc][wb] = false;
-      carve(nr, nc);
-    }
-  }
-  carve(0, 0);
-  return cells;
-}
+  // Fixed layout: 5 evenly-spaced barriers alternating H/V
+  // Positions are randomised within bands to vary each race.
+  const defs = [
+    // [axis, band-center, span-start, span-end]
+    { axis: 'h', y: H * 0.20 + rand(-30, 30) },
+    { axis: 'v', x: W * 0.30 + rand(-30, 30) },
+    { axis: 'h', y: H * 0.45 + rand(-30, 30) },
+    { axis: 'v', x: W * 0.70 + rand(-30, 30) },
+    { axis: 'h', y: H * 0.72 + rand(-30, 30) },
+  ];
 
-function shuffle(a) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.random() * (i + 1) | 0;
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-// ── Segment helpers ──────────────────────────────────────────────────────────
-
-function getMazeSegments(cells) {
-  // Returns array of {x1,y1,x2,y2} wall segments
   const segs = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const x = c * CELL_W, y = r * CELL_H;
-      const cell = cells[r][c];
-      if (cell.top)    segs.push({x1: x, y1: y, x2: x + CELL_W, y2: y});
-      if (cell.left)   segs.push({x1: x, y1: y, x2: x, y2: y + CELL_H});
-      if (cell.bottom) segs.push({x1: x, y1: y + CELL_H, x2: x + CELL_W, y2: y + CELL_H});
-      if (cell.right)  segs.push({x1: x + CELL_W, y1: y, x2: x + CELL_W, y2: y + CELL_H});
+  const rects = []; // for drawing
+
+  for (const d of defs) {
+    if (d.axis === 'h') {
+      const x1 = margin, x2 = W - margin;
+      // gap center somewhere along the wall, away from the edges
+      const gapCx = margin + GAP + Math.random() * (x2 - x1 - 2 * GAP);
+      const gapL = gapCx - GAP / 2;
+      const gapR = gapCx + GAP / 2;
+      const y = d.y;
+      // left segment
+      if (gapL > x1 + 1) {
+        segs.push({ x1, y1: y, x2: gapL, y2: y });
+        rects.push({ x: x1, y: y - WALL_T/2, w: gapL - x1, h: WALL_T });
+      }
+      // right segment
+      if (gapR < x2 - 1) {
+        segs.push({ x1: gapR, y1: y, x2, y2: y });
+        rects.push({ x: gapR, y: y - WALL_T/2, w: x2 - gapR, h: WALL_T });
+      }
+    } else {
+      const y1 = margin, y2 = H - margin;
+      const gapCy = margin + GAP + Math.random() * (y2 - y1 - 2 * GAP);
+      const gapT = gapCy - GAP / 2;
+      const gapB = gapCy + GAP / 2;
+      const x = d.x;
+      if (gapT > y1 + 1) {
+        segs.push({ x1: x, y1, x2: x, y2: gapT });
+        rects.push({ x: x - WALL_T/2, y: y1, w: WALL_T, h: gapT - y1 });
+      }
+      if (gapB < y2 - 1) {
+        segs.push({ x1: x, y1: gapB, x2: x, y2 });
+        rects.push({ x: x - WALL_T/2, y: gapB, w: WALL_T, h: y2 - gapB });
+      }
     }
   }
-  return segs;
+
+  return { segs, rects };
+}
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+
+// ── Finish zone ──────────────────────────────────────────────────────────────
+
+function pickFinish() {
+  const size = 54;
+  const margin = 80;
+  const x = margin + Math.random() * (CANVAS_W - 2 * margin - size);
+  const y = margin + Math.random() * (CANVAS_H - 2 * margin - size);
+  return { x, y, w: size, h: size };
 }
 
 // ── Collision helpers ────────────────────────────────────────────────────────
 
 function circleSegmentCollide(px, py, vx, vy, seg) {
-  // Returns corrected {x,y,vx,vy} if collision, else null
   const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
   const len2 = dx*dx + dy*dy;
   if (len2 === 0) return null;
-
-  // Project circle center onto segment
   let t = ((px - seg.x1)*dx + (py - seg.y1)*dy) / len2;
   t = Math.max(0, Math.min(1, t));
   const cx = seg.x1 + t*dx, cy = seg.y1 + t*dy;
   const ex = px - cx, ey = py - cy;
   const dist = Math.sqrt(ex*ex + ey*ey);
   if (dist >= RACER_R || dist < 0.001) return null;
-
-  // Normal points from segment toward circle
   const nx = ex / dist, ny = ey / dist;
-  // Reflect velocity about normal
   const dot = vx*nx + vy*ny;
-  if (dot >= 0) return null; // moving away already
+  if (dot >= 0) return null;
   const newVx = vx - 2*dot*nx;
   const newVy = vy - 2*dot*ny;
-  // Push out
   const overlap = RACER_R - dist;
-  return {
-    x: px + nx * (overlap + 0.5),
-    y: py + ny * (overlap + 0.5),
-    vx: newVx, vy: newVy
-  };
+  return { x: px + nx*(overlap+0.5), y: py + ny*(overlap+0.5), vx: newVx, vy: newVy };
 }
 
 function resolveRacerCollision(a, b) {
   const dx = b.x - a.x, dy = b.y - a.y;
   const dist = Math.sqrt(dx*dx + dy*dy);
-  if (dist === 0 || dist > 2 * RACER_R) return;
-  const nx = dx / dist, ny = dy / dist;
+  if (dist === 0 || dist > 2*RACER_R) return;
+  const nx = dx/dist, ny = dy/dist;
   const relVx = a.vx - b.vx, relVy = a.vy - b.vy;
   const dot = relVx*nx + relVy*ny;
   if (dot < 0) return;
-  // Exchange velocity along normal (equal mass elastic)
-  a.vx -= dot * nx; a.vy -= dot * ny;
-  b.vx += dot * nx; b.vy += dot * ny;
-  // Separate
-  const overlap = (2*RACER_R - dist) / 2 + 0.5;
-  a.x -= nx * overlap; a.y -= ny * overlap;
-  b.x += nx * overlap; b.y += ny * overlap;
-}
-
-// ── Finish zone ──────────────────────────────────────────────────────────────
-
-function pickFinish() {
-  const margin = 1;
-  const col = margin + (Math.random() * (COLS - 2*margin) | 0);
-  const row = margin + (Math.random() * (ROWS - 2*margin) | 0);
-  return {
-    x: col * CELL_W + WALL,
-    y: row * CELL_H + WALL,
-    w: CELL_W - 2*WALL,
-    h: CELL_H - 2*WALL,
-    col, row
-  };
+  a.vx -= dot*nx; a.vy -= dot*ny;
+  b.vx += dot*nx; b.vy += dot*ny;
+  const overlap = (2*RACER_R - dist)/2 + 0.5;
+  a.x -= nx*overlap; a.y -= ny*overlap;
+  b.x += nx*overlap; b.y += ny*overlap;
 }
 
 // ── Racer spawning ───────────────────────────────────────────────────────────
 
-function spawnRacer(def, avoidFinish) {
-  let col, row;
-  for (let attempts = 0; attempts < 200; attempts++) {
-    col = Math.random() * COLS | 0;
-    row = Math.random() * ROWS | 0;
-    if (Math.abs(col - avoidFinish.col) + Math.abs(row - avoidFinish.row) > 3) break;
+function spawnRacer(def, f) {
+  let x, y;
+  for (let i = 0; i < 300; i++) {
+    x = RACER_R + Math.random() * (CANVAS_W - 2*RACER_R);
+    y = RACER_R + Math.random() * (CANVAS_H - 2*RACER_R);
+    const dx = x - (f.x + f.w/2), dy = y - (f.y + f.h/2);
+    if (Math.sqrt(dx*dx + dy*dy) > 120) break;
   }
   const angle = Math.random() * Math.PI * 2;
-  return {
-    ...def,
-    x: col * CELL_W + CELL_W / 2,
-    y: row * CELL_H + CELL_H / 2,
-    vx: Math.cos(angle) * SPEED,
-    vy: Math.sin(angle) * SPEED,
-    trail: [],
-  };
+  return { ...def, x, y, vx: Math.cos(angle)*SPEED, vy: Math.sin(angle)*SPEED, trail: [] };
 }
 
 // ── Draw ─────────────────────────────────────────────────────────────────────
 
-function drawMaze(cells) {
-  ctx.strokeStyle = '#000';
-  ctx.lineWidth = WALL;
-  ctx.lineCap = 'square';
-  ctx.beginPath();
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const x = c * CELL_W, y = r * CELL_H;
-      const cell = cells[r][c];
-      if (cell.top)    { ctx.moveTo(x, y); ctx.lineTo(x + CELL_W, y); }
-      if (cell.left)   { ctx.moveTo(x, y); ctx.lineTo(x, y + CELL_H); }
-      if (cell.bottom) { ctx.moveTo(x, y + CELL_H); ctx.lineTo(x + CELL_W, y + CELL_H); }
-      if (cell.right)  { ctx.moveTo(x + CELL_W, y); ctx.lineTo(x + CELL_W, y + CELL_H); }
-    }
+function drawBarriers() {
+  ctx.fillStyle = '#222';
+  for (const r of barriers.rects) {
+    // rounded-ish caps
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, WALL_T / 2);
+    ctx.fill();
   }
-  ctx.stroke();
 }
 
 function drawFinish(f) {
-  // Checkered pattern
-  const sq = 8;
+  const sq = 9;
   ctx.save();
   ctx.beginPath();
   ctx.rect(f.x, f.y, f.w, f.h);
   ctx.clip();
   for (let gy = f.y; gy < f.y + f.h; gy += sq) {
     for (let gx = f.x; gx < f.x + f.w; gx += sq) {
-      const even = ((((gy - f.y) / sq) | 0) + (((gx - f.x) / sq) | 0)) % 2 === 0;
-      ctx.fillStyle = even ? '#ffffff' : '#000000';
+      const even = ((((gy - f.y)/sq)|0) + (((gx - f.x)/sq)|0)) % 2 === 0;
+      ctx.fillStyle = even ? '#ffffff' : '#111111';
       ctx.fillRect(gx, gy, sq, sq);
     }
   }
   ctx.restore();
-  // Glow border
   ctx.strokeStyle = '#ffdd00';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.strokeRect(f.x, f.y, f.w, f.h);
 }
 
 function drawRacers() {
   for (const r of racers) {
-    // Trail
     if (r.trail.length > 1) {
       ctx.beginPath();
       ctx.moveTo(r.trail[0].x, r.trail[0].y);
       for (let i = 1; i < r.trail.length; i++) ctx.lineTo(r.trail[i].x, r.trail[i].y);
-      ctx.strokeStyle = r.color + '55';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = r.color + '44';
+      ctx.lineWidth = RACER_R * 0.9;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.stroke();
     }
-    // Body
     ctx.beginPath();
     ctx.arc(r.x, r.y, RACER_R, 0, Math.PI * 2);
     ctx.fillStyle = r.color;
     ctx.fill();
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 }
 
 function render() {
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = '#f5f5f0';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // arena border
+  ctx.strokeStyle = '#bbb';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, 1.5, CANVAS_W - 3, CANVAS_H - 3);
   drawFinish(finish);
-  drawMaze(maze);
+  drawBarriers();
   drawRacers();
 }
 
 // ── Game loop ────────────────────────────────────────────────────────────────
 
-let segments;
+const TRAIL_MAX = 30;
 
 function init() {
-  maze = buildMaze();
-  segments = getMazeSegments(maze);
+  barriers = buildBarriers();
   finish = pickFinish();
   racers = RACERS_DEF.map(d => spawnRacer(d, finish));
   state = 'idle';
@@ -386,68 +359,55 @@ function buildLegend() {
   ).join('');
 }
 
-const TRAIL_MAX = 24;
-
 function step() {
   if (state !== 'running') return;
-
   const elapsed = (Date.now() - startTime) / 1000;
   timerEl.textContent = elapsed.toFixed(2) + 's';
 
-  // Move racers
   for (const r of racers) {
     r.x += r.vx;
     r.y += r.vy;
 
-    // Keep on screen (canvas boundary)
-    if (r.x - RACER_R < 0)          { r.x = RACER_R;          r.vx = Math.abs(r.vx); }
-    if (r.x + RACER_R > CANVAS_W)   { r.x = CANVAS_W - RACER_R; r.vx = -Math.abs(r.vx); }
-    if (r.y - RACER_R < 0)          { r.y = RACER_R;          r.vy = Math.abs(r.vy); }
-    if (r.y + RACER_R > CANVAS_H)   { r.y = CANVAS_H - RACER_R; r.vy = -Math.abs(r.vy); }
+    // Arena boundary
+    if (r.x - RACER_R < 0)          { r.x = RACER_R;              r.vx =  Math.abs(r.vx); }
+    if (r.x + RACER_R > CANVAS_W)   { r.x = CANVAS_W - RACER_R;   r.vx = -Math.abs(r.vx); }
+    if (r.y - RACER_R < 0)          { r.y = RACER_R;              r.vy =  Math.abs(r.vy); }
+    if (r.y + RACER_R > CANVAS_H)   { r.y = CANVAS_H - RACER_R;   r.vy = -Math.abs(r.vy); }
 
-    // Wall collisions
-    for (const seg of segments) {
-      const result = circleSegmentCollide(r.x, r.y, r.vx, r.vy, seg);
-      if (result) {
-        r.x = result.x; r.y = result.y;
-        r.vx = result.vx; r.vy = result.vy;
-      }
+    // Barrier collisions
+    for (const seg of barriers.segs) {
+      const hit = circleSegmentCollide(r.x, r.y, r.vx, r.vy, seg);
+      if (hit) { r.x = hit.x; r.y = hit.y; r.vx = hit.vx; r.vy = hit.vy; }
     }
 
-    // Maintain constant speed
+    // Constant speed
     const spd = Math.sqrt(r.vx*r.vx + r.vy*r.vy);
     if (spd > 0.001) { r.vx = r.vx/spd * SPEED; r.vy = r.vy/spd * SPEED; }
 
-    // Trail
     r.trail.push({x: r.x, y: r.y});
     if (r.trail.length > TRAIL_MAX) r.trail.shift();
   }
 
-  // Racer–racer collisions
-  for (let i = 0; i < racers.length; i++) {
-    for (let j = i+1; j < racers.length; j++) {
+  // Racer–racer
+  for (let i = 0; i < racers.length; i++)
+    for (let j = i+1; j < racers.length; j++)
       resolveRacerCollision(racers[i], racers[j]);
-    }
-  }
 
-  // Leader (closest to finish center)
+  // Leader
   const fcx = finish.x + finish.w/2, fcy = finish.y + finish.h/2;
-  let leader = racers.reduce((a, b) => {
-    const da = (a.x-fcx)**2 + (a.y-fcy)**2;
-    const db = (b.x-fcx)**2 + (b.y-fcy)**2;
-    return da < db ? a : b;
-  });
+  const leader = racers.reduce((a, b) =>
+    (a.x-fcx)**2+(a.y-fcy)**2 < (b.x-fcx)**2+(b.y-fcy)**2 ? a : b
+  );
   leaderEl.textContent = 'Leading: ' + leader.name;
   leaderEl.style.background = leader.color + '33';
   leaderEl.style.borderColor = leader.color;
   leaderEl.style.color = leader.color;
 
-  // Win check
+  // Win
   for (const r of racers) {
     if (r.x >= finish.x && r.x <= finish.x + finish.w &&
         r.y >= finish.y && r.y <= finish.y + finish.h) {
-      endRace(r, elapsed);
-      return;
+      endRace(r, elapsed); return;
     }
   }
 
@@ -470,8 +430,6 @@ function endRace(winner, elapsed) {
   timerEl.textContent = elapsed.toFixed(2) + 's';
 }
 
-// ── Buttons ──────────────────────────────────────────────────────────────────
-
 btnStart.addEventListener('click', () => {
   if (state === 'running') return;
   if (state === 'done') { init(); return; }
@@ -485,7 +443,6 @@ btnRestart.addEventListener('click', () => {
   init();
 });
 
-// ── Boot ─────────────────────────────────────────────────────────────────────
 init();
 </script>
 </body>
