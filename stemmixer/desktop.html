@@ -154,8 +154,11 @@ body.dark-mode .studio-section{background:rgba(30,30,28,0.35);}
   flex-shrink:0;
 }
 body.dark-mode .strip-eq{background:rgba(255,255,255,0.015);}
-.strip-eq.loaded{display:flex;}
+.strip-eq.loaded.open{display:flex;}
 .stem-eq-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+.strip-panel-btn{font-size:7px;letter-spacing:.14em;text-transform:lowercase;color:var(--hint);background:none;border:none;cursor:pointer;padding:0 3px;opacity:0.6;transition:opacity .2s,color .2s;}
+.strip-panel-btn:hover{opacity:1;}
+.strip-panel-btn.active{color:#8040ff;opacity:1;}
 .stem-eq-title{font-size:7px;letter-spacing:.24em;text-transform:uppercase;color:var(--hint);user-select:none;}
 .steq-reset{font-size:7px;letter-spacing:.12em;text-transform:lowercase;color:var(--hint);background:none;border:none;cursor:pointer;padding:3px 0;transition:color .2s;-webkit-tap-highlight-color:transparent;}
 .steq-reset:hover{color:var(--link-hover);}
@@ -288,7 +291,7 @@ body.dark-flash{animation:dark-unlock .6s ease-out;}
 .eq-card.clipping{animation:clip-flash .18s ease;}
 .strip-extra{border-bottom:1px solid var(--card-border);padding:10px 14px 12px;display:none;flex-direction:column;gap:7px;background:rgba(0,0,0,0.01);flex-shrink:0;}
 body.dark-mode .strip-extra{background:rgba(255,255,255,0.01);}
-.strip-extra.loaded{display:flex;}
+.strip-extra.loaded.open{display:flex;}
 .strip-extra-row{display:flex;align-items:center;gap:6px;min-height:20px;}
 .strip-extra-label{font-size:7px;letter-spacing:.14em;text-transform:uppercase;color:var(--hint);width:26px;flex-shrink:0;}
 .strip-extra-slider{-webkit-appearance:none;appearance:none;flex:1;height:5px;border-radius:5px;outline:none;cursor:grab;background:var(--seg-off);}
@@ -948,7 +951,7 @@ function buildMasterStudioChain(){
   masterHigh=actx.createBiquadFilter();masterHigh.type='highshelf';masterHigh.frequency.value=9000;masterHigh.gain.value=masterHighGain;
   masterComp=actx.createDynamicsCompressor();
   masterOutput=actx.createGain();masterOutput.gain.value=masterVol;
-  tapeSatNode=actx.createWaveShaper();tapeSatNode.curve=makeSatCurve(0);tapeSatNode.oversample='4x';
+  tapeSatNode=actx.createWaveShaper();tapeSatNode.curve=makeIdentityCurve(256);tapeSatNode.oversample='4x';
   loFiHPF=actx.createBiquadFilter();loFiHPF.type='highpass';loFiHPF.frequency.value=20;loFiHPF.Q.value=0.707;
   loFiLPF=actx.createBiquadFilter();loFiLPF.type='lowpass';loFiLPF.frequency.value=20000;loFiLPF.Q.value=0.707;
   loFiBitcrush=actx.createWaveShaper();loFiBitcrush.curve=makeIdentityCurve(256);
@@ -1381,7 +1384,7 @@ function buildEqCard(id,name){
   const s=STEMS.find(x=>x.id===id);
   const card=document.createElement('div');card.className='eq-card';card.id='eq-'+id;
   card.innerHTML=`<div class="eq-inner" id="eqinner-${id}">
-    <div class="eq-card-header"><div class="eq-label" style="color:${s.acc}">${s.label}</div><button class="spec-toggle-btn" id="spec-btn-${id}" title="Toggle spectrogram">spec</button></div>
+    <div class="eq-card-header"><div class="eq-label" style="color:${s.acc}">${s.label}</div><div style="display:flex;gap:4px;align-items:center"><button class="strip-panel-btn" id="eq-panel-btn-${id}" title="Toggle EQ">eq</button><button class="strip-panel-btn" id="fx-panel-btn-${id}" title="Toggle FX">fx</button><button class="spec-toggle-btn" id="spec-btn-${id}" title="Toggle spectrogram">spec</button></div></div>
     <div class="eq-bars-wrap">
       <canvas class="waveform-canvas" id="wc-${id}" width="200" height="86"></canvas>
       <canvas class="spectrogram-canvas" id="spec-${id}" width="200" height="86"></canvas>
@@ -1399,6 +1402,20 @@ function buildEqCard(id,name){
     const barsEl=card.querySelector('#eqbars-'+id);
     if(specCanvas){specCanvas.style.display=spectrogramMode[id]?'block':'none';}
     if(barsEl){barsEl.style.opacity=spectrogramMode[id]?'0':'1';}
+  });
+  card.querySelector('#eq-panel-btn-'+id)?.addEventListener('click',e=>{
+    e.stopPropagation();
+    const panel=document.getElementById('steq-'+id);
+    if(!panel)return;
+    const open=panel.classList.toggle('open');
+    e.target.classList.toggle('active',open);
+  });
+  card.querySelector('#fx-panel-btn-'+id)?.addEventListener('click',e=>{
+    e.stopPropagation();
+    const panel=document.getElementById('sxtra-'+id);
+    if(!panel)return;
+    const open=panel.classList.toggle('open');
+    e.target.classList.toggle('active',open);
   });
   (document.getElementById('eq-'+id)||document.getElementById('dz-'+id)).replaceWith(card);
   // Draw waveform if data available
@@ -1480,6 +1497,7 @@ async function loadStem(id,file){
     const lbl=document.getElementById('lbl-'+id);lbl.classList.remove('inactive');lbl.style.color=STEMS.find(s=>s.id===id).acc;
     triggerRainbow(id);updateTimeDisplay();setStatus('');
     if(playing)spawnSrc(id,actx.currentTime-startTime);
+    applyVol(id);
     if(window._pendingMixState){restoreMix(window._pendingMixState);delete window._pendingMixState;}
   }catch(err){if(url&&!stemUrls[id])URL.revokeObjectURL(url);setStatus('Error loading '+id);console.error(err);}
 }
@@ -1681,10 +1699,10 @@ document.getElementById('reset-btn').addEventListener('click',()=>{
       document.getElementById('fi-'+s.id).addEventListener('change',e=>{if(e.target.files.length)handleFiles([...e.target.files],s.id);});
     }
     const steqEl=document.getElementById('steq-'+s.id);
-    if(steqEl)steqEl.classList.remove('loaded');
+    if(steqEl)steqEl.classList.remove('loaded','open');
     resetStemEq(s.id);
     const sxtraEl=document.getElementById('sxtra-'+s.id);
-    if(sxtraEl)sxtraEl.classList.remove('loaded');
+    if(sxtraEl)sxtraEl.classList.remove('loaded','open');
     stemPitchVals[s.id]=0;stemRevVals[s.id]=0;stemDelVals[s.id]=0;phaseInvert[s.id]=false;
     const pSlider=document.getElementById('spitch-'+s.id);if(pSlider)pSlider.value=0;
     document.getElementById('spitchv-'+s.id)&&(document.getElementById('spitchv-'+s.id).textContent='0');
@@ -1997,7 +2015,7 @@ async function toggleCue(id){
   const satVal=document.getElementById('sat-val');
   if(satEl)satEl.addEventListener('input',()=>{
     masterSaturation=parseInt(satEl.value);if(satVal)satVal.textContent=masterSaturation;
-    if(tapeSatNode)tapeSatNode.curve=makeSatCurve(masterSaturation);
+    if(tapeSatNode)tapeSatNode.curve=masterSaturation>0?makeSatCurve(masterSaturation):makeIdentityCurve(256);
   });
 })();
 
