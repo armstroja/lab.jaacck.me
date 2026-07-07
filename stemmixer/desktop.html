@@ -1784,7 +1784,7 @@ function triggerBlobDownload(blob,filename){const url=URL.createObjectURL(blob);
 // Utility curves
 function makeIdentityCurve(n=2){const c=new Float32Array(n);c[0]=-1;c[n-1]=1;for(let i=1;i<n-1;i++)c[i]=(i*2/(n-1))-1;return c;}
 function makeInvertCurve(n=256){const c=new Float32Array(n);for(let i=0;i<n;i++)c[i]=-((i*2/(n-1))-1);return c;}
-function makeSatCurve(val){const n=256,drive=val/100*5;const c=new Float32Array(n);for(let i=0;i<n;i++){const x=(i*2/(n-1))-1;c[i]=(3+drive)*x/(1+Math.abs((3+drive)*x));}return c;}
+function makeSatCurve(val){const n=256,amt=val/100,drive=1+amt*9;const c=new Float32Array(n);for(let i=0;i<n;i++){const x=(i*2/(n-1))-1;const sat=Math.tanh(drive*x)/Math.tanh(drive);c[i]=x*(1-amt)+sat*amt;}return c;}
 function makeBitcrushCurve(){const n=256;const c=new Float32Array(n);for(let i=0;i<n;i++){const x=(i*2/(n-1))-1;c[i]=Math.round(x*16)/16;}return c;}
 
 // Feature 1: Varispeed
